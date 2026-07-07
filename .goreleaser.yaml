@@ -3,7 +3,7 @@ version: 2
 project_name: julius
 
 builds:
-  - main: .
+  - main: ./cmd/julius
     binary: julius
     env:
       - CGO_ENABLED=0
