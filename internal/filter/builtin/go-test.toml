@@ -1,0 +1,45 @@
+# go test — keep failures and package summaries, drop pass noise.
+[filters.go-test]
+description = "go test: failures and summary only"
+command = '^go\s+test\b'
+strip_ansi = true
+drop_lines = [
+  '^=== RUN\b',
+  '^=== PAUSE\b',
+  '^=== CONT\b',
+  '^--- PASS\b',
+  '^\s+--- PASS\b',
+  '^PASS$',
+  '^coverage:',
+  '^\s*$',
+]
+if_empty = "go test: ok"
+
+[[filters.go-test.tests]]
+name = "passing run collapses to package lines"
+input = """
+=== RUN   TestA
+--- PASS: TestA (0.01s)
+=== RUN   TestB
+--- PASS: TestB (0.00s)
+PASS
+ok  	github.com/x/pkg	0.212s
+"""
+want = "ok  	github.com/x/pkg	0.212s"
+
+[[filters.go-test.tests]]
+name = "failure detail is kept"
+exit_code = 1
+input = """
+=== RUN   TestBroken
+    thing_test.go:42: got 1, want 2
+--- FAIL: TestBroken (0.00s)
+FAIL
+FAIL	github.com/x/pkg	0.031s
+"""
+want = """
+    thing_test.go:42: got 1, want 2
+--- FAIL: TestBroken (0.00s)
+FAIL
+FAIL	github.com/x/pkg	0.031s
+"""
