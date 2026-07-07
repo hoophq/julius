@@ -3,10 +3,8 @@
 /julius.exe
 /dist/
 
-# local agent tooling (not part of the public repo)
+# local agent settings
 /.claude/
-/.rtk/
-/CLAUDE.md
 
 # OS noise
 .DS_Store

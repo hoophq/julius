@@ -1,0 +1,111 @@
+# eslint — violations only (eslint is already terse; drop decorations).
+[filters.eslint]
+description = "eslint: violations and summary only"
+command = '(^|\s)eslint\b|^(npx|pnpm|yarn)\s+eslint\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = ['^\s*$']
+if_empty = "eslint: clean"
+
+[[filters.eslint.tests]]
+name = "clean run collapses"
+input = ""
+want = "eslint: clean"
+
+[[filters.eslint.tests]]
+name = "violations kept"
+exit_code = 1
+input = """
+/app/src/api.ts
+  12:7   error  'x' is assigned a value but never used  no-unused-vars
+
+✖ 1 problem (1 error, 0 warnings)
+"""
+want = """
+/app/src/api.ts
+  12:7   error  'x' is assigned a value but never used  no-unused-vars
+✖ 1 problem (1 error, 0 warnings)
+"""
+
+# tsc — errors only; a clean compile is silent anyway.
+[filters.tsc]
+description = "tsc: errors and summary only"
+command = '(^|\s)tsc\b|^(npx|pnpm|yarn)\s+tsc\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = ['^\s*$']
+if_empty = "tsc: clean"
+
+[[filters.tsc.tests]]
+name = "clean compile collapses"
+input = ""
+want = "tsc: clean"
+
+[[filters.tsc.tests]]
+name = "errors kept"
+exit_code = 2
+input = """
+src/api.ts:12:7 - error TS6133: 'x' is declared but its value is never read.
+
+12 const x = 1;
+         ~
+
+Found 1 error in src/api.ts:12
+"""
+want = """
+src/api.ts:12:7 - error TS6133: 'x' is declared but its value is never read.
+12 const x = 1;
+         ~
+Found 1 error in src/api.ts:12
+"""
+
+# npm / pnpm install — keep the outcome lines, drop progress and trees.
+[filters.js-install]
+description = "npm/pnpm install: outcome only"
+command = '^(npm|pnpm|yarn)\s+(install|i|add|ci)\b'
+strip_ansi = true
+merge_stderr = true
+keep_lines = [
+  'added \d+ packages?',
+  'removed \d+ packages?',
+  'changed \d+ packages?',
+  '(?i)^up to date',
+  '^Already up to date',
+  '^Done in',
+  '(?i)err',
+  '(?i)warn.*deprecated',
+  'vulnerabilit',
+]
+head = 20
+if_empty = "install: ok"
+
+[[filters.js-install.tests]]
+name = "npm install outcome"
+input = """
+npm warn deprecated glob@7.2.3: Glob versions prior to v9 are no longer supported
+
+added 214 packages, and audited 215 packages in 4s
+
+42 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+"""
+want = """
+npm warn deprecated glob@7.2.3: Glob versions prior to v9 are no longer supported
+added 214 packages, and audited 215 packages in 4s
+found 0 vulnerabilities
+"""
+
+[[filters.js-install.tests]]
+name = "pnpm quiet install"
+input = """
+Lockfile is up to date, resolution step is skipped
+Already up to date
+
+Done in 1.2s using pnpm v10.0.0
+"""
+want = """
+Already up to date
+Done in 1.2s using pnpm v10.0.0
+"""

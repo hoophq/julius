@@ -1,0 +1,71 @@
+# jest / vitest — keep failures and the run summary, drop pass noise.
+[filters.js-test]
+description = "jest/vitest: failures and summary only"
+command = '(^|\s)(jest|vitest)\b|^(npx|pnpm|npm run|yarn)\s+(jest|vitest|test)\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^\s*✓',
+  '^\s*√',
+  '^PASS ',
+  '^\s*$',
+  '^RUNS? ',
+  '^Ran all test suites',
+  '% Stmts',
+  '^-{5,}',
+]
+if_empty = "tests: ok"
+
+[[filters.js-test.tests]]
+name = "passing run keeps summary only"
+input = """
+PASS src/api.test.ts
+  ✓ creates a user (12 ms)
+  ✓ rejects invalid email (3 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       2 passed, 2 total
+Snapshots:   0 total
+Time:        1.532 s
+Ran all test suites.
+"""
+want = """
+Test Suites: 1 passed, 1 total
+Tests:       2 passed, 2 total
+Snapshots:   0 total
+Time:        1.532 s
+"""
+
+[[filters.js-test.tests]]
+name = "failures kept"
+exit_code = 1
+input = """
+FAIL src/api.test.ts
+  ✓ creates a user (12 ms)
+  ✕ rejects invalid email (5 ms)
+
+  ● rejects invalid email
+
+    expect(received).toBe(expected)
+
+    Expected: 400
+    Received: 200
+
+      14 |   const res = await post('/users', bad)
+    > 15 |   expect(res.status).toBe(400)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 passed, 2 total
+"""
+want = """
+FAIL src/api.test.ts
+  ✕ rejects invalid email (5 ms)
+  ● rejects invalid email
+    expect(received).toBe(expected)
+    Expected: 400
+    Received: 200
+      14 |   const res = await post('/users', bad)
+    > 15 |   expect(res.status).toBe(400)
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 passed, 2 total
+"""

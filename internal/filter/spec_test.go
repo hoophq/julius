@@ -40,6 +40,11 @@ func TestFinalizeInvariants(t *testing.T) {
 	if r.Output != "data" {
 		t.Errorf("emptied output must fall back to raw, got %q", r.Output)
 	}
+	// Empty raw input: a terse ack from if_empty is allowed.
+	r = Finalize("", Result{Output: "ok", Applied: true})
+	if r.Output != "ok" {
+		t.Errorf("ack on empty raw must survive, got %q", r.Output)
+	}
 	// Passthrough keeps raw.
 	r = Finalize("data", Result{Output: "ignored", Applied: false})
 	if r.Output != "data" {

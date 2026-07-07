@@ -36,12 +36,19 @@ type Filter interface {
 //   - never silently empty: if filtering emptied non-empty input, the raw
 //     input wins.
 //
+// Exception: when the raw input itself is empty, a filter may emit a terse
+// ack (an if_empty message like "ok") — confirming success to the agent is
+// worth those few tokens.
+//
 // Every call path that applies a Filter must route its result through here.
 func Finalize(raw string, r Result) Result {
 	if !r.Applied {
 		return Result{Output: raw}
 	}
-	if trimmed(r.Output) == "" && trimmed(raw) != "" {
+	if trimmed(raw) == "" {
+		return r
+	}
+	if trimmed(r.Output) == "" {
 		return Result{Output: raw}
 	}
 	if tokens.Estimate(r.Output) > tokens.Estimate(raw) {
