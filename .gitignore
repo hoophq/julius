@@ -1,0 +1,16 @@
+# binaries & release artifacts
+/julius
+/julius.exe
+/dist/
+
+# local agent tooling (not part of the public repo)
+/.claude/
+/.rtk/
+/CLAUDE.md
+
+# OS noise
+.DS_Store
+
+# test & coverage
+*.test
+coverage.out
