@@ -108,6 +108,86 @@ func (l *Ledger) RecordHookEvent(ev HookEvent) error {
 	return err
 }
 
+// APICall is one proxy-surface usage record: exact, provider-reported.
+type APICall struct {
+	TS         time.Time
+	AppTag     string
+	Provider   string
+	Model      string
+	Input      int
+	Output     int
+	CacheRead  int
+	CacheWrite int
+}
+
+// RecordAPICall inserts one usage record.
+func (l *Ledger) RecordAPICall(c APICall) error {
+	if c.TS.IsZero() {
+		c.TS = time.Now()
+	}
+	_, err := l.db.Exec(
+		`INSERT INTO api_calls (ts, app_tag, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.TS.UTC().Format(time.RFC3339), c.AppTag, c.Provider, c.Model,
+		c.Input, c.Output, c.CacheRead, c.CacheWrite,
+	)
+	return err
+}
+
+// APITotals is an aggregate over api_calls rows.
+type APITotals struct {
+	Calls      int
+	Input      int
+	Output     int
+	CacheRead  int
+	CacheWrite int
+}
+
+// APIUsage aggregates the proxy surface since a point in time.
+func (l *Ledger) APIUsage(since time.Time) (APITotals, error) {
+	var t APITotals
+	err := l.db.QueryRow(
+		`SELECT COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+		        COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_write_tokens),0)
+		 FROM api_calls WHERE ts >= ?`,
+		since.UTC().Format(time.RFC3339),
+	).Scan(&t.Calls, &t.Input, &t.Output, &t.CacheRead, &t.CacheWrite)
+	return t, err
+}
+
+// AppUsage is a per-app/model aggregate row.
+type AppUsage struct {
+	AppTag string
+	Model  string
+	APITotals
+}
+
+// APIUsageByApp breaks down proxy usage per app tag and model.
+func (l *Ledger) APIUsageByApp(since time.Time, limit int) ([]AppUsage, error) {
+	rows, err := l.db.Query(
+		`SELECT app_tag, model, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+		        COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_write_tokens),0)
+		 FROM api_calls WHERE ts >= ?
+		 GROUP BY app_tag, model
+		 ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
+		 LIMIT ?`,
+		since.UTC().Format(time.RFC3339), limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AppUsage
+	for rows.Next() {
+		var a AppUsage
+		if err := rows.Scan(&a.AppTag, &a.Model, &a.Calls, &a.Input, &a.Output, &a.CacheRead, &a.CacheWrite); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // Totals summarizes the hook surface since the given time.
 type Totals struct {
 	Events       int

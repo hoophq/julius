@@ -31,6 +31,7 @@ func newSavingsCmd() *cobra.Command {
 			if tot.Events == 0 {
 				fmt.Println("  no filtered commands recorded yet")
 				fmt.Println("\n  run `julius init` to install the Claude Code hook, or prefix commands manually: julius git status")
+				renderAPIUsage(l, since, days)
 				return nil
 			}
 			pct := 0.0
@@ -54,12 +55,34 @@ func newSavingsCmd() *cobra.Command {
 					fmt.Printf("    %-28s %8s saved  %3.0f%%  (%d runs)\n", truncate(c.Command, 28), fmtTokens(c.Saved()), cmdPct, c.Events)
 				}
 			}
-			fmt.Println("\nAPI usage — exact, provider-reported: available with `julius proxy` (coming soon)")
+			renderAPIUsage(l, since, days)
 			return nil
 		},
 	}
 	cmd.Flags().IntVar(&days, "days", 30, "look-back window in days")
 	return cmd
+}
+
+// renderAPIUsage prints the proxy surface. The two surfaces are reported
+// separately by design: hook numbers are estimates, these are exact.
+func renderAPIUsage(l *ledger.Ledger, since time.Time, days int) {
+	api, err := l.APIUsage(since)
+	if err != nil || api.Calls == 0 {
+		fmt.Println("\nAPI usage — exact, provider-reported: none recorded. Run `julius proxy serve` and point apps at it.")
+		return
+	}
+	fmt.Printf("\nAPI usage — exact, provider-reported, last %dd\n\n", days)
+	fmt.Printf("  calls: %d   input: %s   output: %s   cache read: %s   cache write: %s\n",
+		api.Calls, fmtTokens(api.Input), fmtTokens(api.Output), fmtTokens(api.CacheRead), fmtTokens(api.CacheWrite))
+	byApp, err := l.APIUsageByApp(since, 10)
+	if err != nil || len(byApp) == 0 {
+		return
+	}
+	fmt.Println("\n  by app and model:")
+	for _, a := range byApp {
+		fmt.Printf("    %-16s %-24s %8s in  %8s out  (%d calls)\n",
+			truncate(a.AppTag, 16), truncate(a.Model, 24), fmtTokens(a.Input), fmtTokens(a.Output), a.Calls)
+	}
 }
 
 func fmtTokens(n int) string {

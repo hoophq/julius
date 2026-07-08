@@ -12,4 +12,6 @@ linters:
         - (*os.File).WriteString
         - (*database/sql.DB).Close
         - (*database/sql.Rows).Close
+        - (*net/http.Response).Body.Close
+        - (io.ReadCloser).Close
         - (*github.com/hoophq/julius/internal/ledger.Ledger).Close
