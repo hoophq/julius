@@ -59,6 +59,29 @@ func buildCorpus() []corpusCase {
 	}
 	jest.WriteString("\nTest Suites: 8 passed, 8 total\nTests:       48 passed, 48 total\nSnapshots:   0 total\nTime:        3.87 s\nRan all test suites.\n")
 
+	var cargo strings.Builder
+	for i := 0; i < 45; i++ {
+		fmt.Fprintf(&cargo, "   Compiling crate-%02d v0.%d.0\n", i, i%9)
+	}
+	cargo.WriteString("    Finished `dev` profile [unoptimized + debuginfo] target(s) in 14.02s\n")
+
+	var tfplan strings.Builder
+	for i := 0; i < 25; i++ {
+		fmt.Fprintf(&tfplan, "aws_iam_role.svc%02d: Refreshing state... [id=svc%02d]\ndata.aws_policy.p%02d: Reading...\ndata.aws_policy.p%02d: Read complete after 0s\n", i, i, i, i)
+	}
+	tfplan.WriteString("\nTerraform will perform the following actions:\n\n  # aws_s3_bucket.logs will be created\n  + resource \"aws_s3_bucket\" \"logs\" {\n      + bucket = \"my-logs\"\n    }\n\nPlan: 1 to add, 0 to change, 0 to destroy.\n")
+
+	var pip strings.Builder
+	for i := 0; i < 20; i++ {
+		fmt.Fprintf(&pip, "Collecting package-%02d\n  Downloading package_%02d-1.%d.0-py3-none-any.whl (%d kB)\n", i, i, i%7, i*13+40)
+	}
+	pip.WriteString("Installing collected packages: many\nSuccessfully installed all-the-things-1.0\n")
+
+	var dbuild strings.Builder
+	for i := 1; i <= 30; i++ {
+		fmt.Fprintf(&dbuild, "#%d [%d/30] RUN step-%d\n#%d DONE %d.%ds\n", i, i, i, i, i%9, i%10)
+	}
+
 	return []corpusCase{
 		{"go test ./...", goTest.String(), 85},
 		{"pytest", pytest.String(), 75},
@@ -66,6 +89,10 @@ func buildCorpus() []corpusCase {
 		{"npm install", npm.String(), 85},
 		{"git push origin main", push.String(), 70},
 		{"npx jest", jest.String(), 85},
+		{"cargo build", cargo.String(), 90},
+		{"terraform plan", tfplan.String(), 75},
+		{"pip3 install -r requirements.txt", pip.String(), 85},
+		{"docker build -t app .", dbuild.String(), 90},
 	}
 }
 

@@ -1,0 +1,66 @@
+# kubectl get — resource tables are dense already; cap runaway lists.
+[filters.kubectl-get]
+description = "kubectl get: capped resource list"
+command = '^kubectl\s+get\b'
+strip_ansi = true
+head = 60
+
+[[filters.kubectl-get.tests]]
+name = "short table unchanged"
+input = """
+NAME                     READY   STATUS    RESTARTS   AGE
+api-7d4b9c6f8-x2m4p      1/1     Running   0          2d
+worker-6f9d8b7c5-k8s2j   1/1     Running   3          2d
+"""
+want = """
+NAME                     READY   STATUS    RESTARTS   AGE
+api-7d4b9c6f8-x2m4p      1/1     Running   0          2d
+worker-6f9d8b7c5-k8s2j   1/1     Running   3          2d
+"""
+
+# kubectl describe — drop placeholder-only noise, keep everything real.
+# Note: values are passed through untouched, never summarized — julius adds
+# no new exposure beyond what the command already prints.
+[filters.kubectl-describe]
+description = "kubectl describe: placeholder noise removed"
+command = '^kubectl\s+describe\b'
+strip_ansi = true
+drop_lines = [
+  '^\S+:\s+<none>$',
+  '^\s+<none>$',
+  '^Annotations:\s+<none>$',
+  '^Labels:\s+<none>$',
+  '^Events:\s+<none>$',
+  '^\s*$',
+]
+
+[[filters.kubectl-describe.tests]]
+name = "none placeholders dropped"
+input = """
+Name:         api-7d4b9c6f8-x2m4p
+Namespace:    default
+Labels:       <none>
+Annotations:  <none>
+Status:       Running
+IP:           10.1.0.14
+Events:       <none>
+"""
+want = """
+Name:         api-7d4b9c6f8-x2m4p
+Namespace:    default
+Status:       Running
+IP:           10.1.0.14
+"""
+
+# kubectl logs — recent tail, like docker logs.
+[filters.kubectl-logs]
+description = "kubectl logs: last 100 lines"
+command = '^kubectl\s+logs\b'
+strip_ansi = true
+merge_stderr = true
+tail = 100
+
+[[filters.kubectl-logs.tests]]
+name = "short logs unchanged"
+input = "starting controller\nreconcile ok\n"
+want = "starting controller\nreconcile ok"

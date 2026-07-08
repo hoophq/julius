@@ -1,0 +1,106 @@
+# docker build — drop BuildKit layer progress, keep errors and the result.
+[filters.docker-build]
+description = "docker build: errors and result only"
+command = '^docker\s+build(x\s+build)?\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^#\d+ \[',
+  '^#\d+ sha256:',
+  '^#\d+ extracting',
+  '^#\d+ resolving',
+  '^#\d+ transferring',
+  '^#\d+ DONE',
+  '^#\d+ CACHED',
+  '^#\d+ \.\.\.',
+  '^#\d+ exporting ',
+  '^#\d+ naming ',
+  '^\s*$',
+]
+if_empty = "docker build: ok"
+
+[[filters.docker-build.tests]]
+name = "layer noise dropped, result kept"
+input = """
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 231B done
+#1 DONE 0.0s
+#2 [1/3] FROM docker.io/library/golang:1.25
+#2 CACHED
+#3 [2/3] COPY . /app
+#3 DONE 0.1s
+#4 [3/3] RUN go build -o server .
+#4 DONE 12.3s
+#5 exporting to image
+#5 naming to docker.io/library/myapp:latest done
+#5 DONE 0.2s
+"""
+want = "docker build: ok"
+
+[[filters.docker-build.tests]]
+name = "build errors survive"
+exit_code = 1
+input = """
+#4 [3/3] RUN go build -o server .
+#4 ERROR: process "/bin/sh -c go build -o server ." did not complete successfully: exit code: 1
+------
+ > [3/3] RUN go build -o server .:
+1.503 main.go:7:2: undefined: fmt.Printn
+------
+ERROR: failed to solve: process did not complete successfully
+"""
+want = """
+#4 ERROR: process "/bin/sh -c go build -o server ." did not complete successfully: exit code: 1
+------
+ > [3/3] RUN go build -o server .:
+1.503 main.go:7:2: undefined: fmt.Printn
+------
+ERROR: failed to solve: process did not complete successfully
+"""
+
+# docker logs — recent tail; full history is rarely what an agent needs.
+[filters.docker-logs]
+description = "docker logs: last 100 lines"
+command = '^docker\s+logs\b'
+strip_ansi = true
+merge_stderr = true
+tail = 100
+
+[[filters.docker-logs.tests]]
+name = "short logs unchanged"
+input = """
+server listening on :8080
+GET /healthz 200
+"""
+want = """
+server listening on :8080
+GET /healthz 200
+"""
+
+# docker pull/push — drop layer progress, keep digest and status.
+[filters.docker-pull]
+description = "docker pull/push: status and digest only"
+command = '^docker\s+(pull|push)\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^[0-9a-f]{12}: ',
+  '^\s*$',
+]
+
+[[filters.docker-pull.tests]]
+name = "layer lines dropped"
+input = """
+latest: Pulling from library/redis
+a2abf6c4d29d: Pull complete
+c7a4e4382001: Pull complete
+Digest: sha256:db485f2e245b5b3329fdc7eff4eb00f913e09d8feb9ca720788059fdc2ed8339
+Status: Downloaded newer image for redis:latest
+docker.io/library/redis:latest
+"""
+want = """
+latest: Pulling from library/redis
+Digest: sha256:db485f2e245b5b3329fdc7eff4eb00f913e09d8feb9ca720788059fdc2ed8339
+Status: Downloaded newer image for redis:latest
+docker.io/library/redis:latest
+"""

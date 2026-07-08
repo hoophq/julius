@@ -3,6 +3,7 @@ package filter
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -68,13 +69,21 @@ type SpecTest struct {
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
 // ParseFile parses a filters.toml document and compiles every spec.
+// Specs are returned in name order — lookup must be deterministic even
+// when matchers overlap.
 func ParseFile(data []byte) ([]*Spec, error) {
 	var f File
 	if err := toml.Unmarshal(data, &f); err != nil {
 		return nil, err
 	}
-	specs := make([]*Spec, 0, len(f.Filters))
-	for name, s := range f.Filters {
+	names := make([]string, 0, len(f.Filters))
+	for name := range f.Filters {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	specs := make([]*Spec, 0, len(names))
+	for _, name := range names {
+		s := f.Filters[name]
 		if err := s.compile(name); err != nil {
 			return nil, fmt.Errorf("filter %q: %w", name, err)
 		}
@@ -157,7 +166,9 @@ func (s *Spec) MatchOutput(text string) bool {
 
 // Apply implements Filter. Callers must pass the result through Finalize.
 func (s *Spec) Apply(raw string, exitCode int) Result {
-	out := raw
+	// Normalize CRLF so line anchors behave identically on Windows output
+	// (and the \r bytes were only ever costing tokens).
+	out := strings.ReplaceAll(raw, "\r\n", "\n")
 	if s.StripANSI {
 		out = ansiRe.ReplaceAllString(out, "")
 	}

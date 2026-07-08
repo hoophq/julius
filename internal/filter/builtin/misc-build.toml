@@ -1,0 +1,97 @@
+# make — drop directory-recursion chatter.
+[filters.make]
+description = "make: directory chatter removed"
+command = '^make\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  "^make\\[\\d+\\]: (Entering|Leaving) directory",
+  '^\s*$',
+]
+if_empty = "make: ok"
+
+[[filters.make.tests]]
+name = "directory chatter dropped"
+input = """
+make[1]: Entering directory '/app/sub'
+gcc -o thing thing.c
+make[1]: Leaving directory '/app/sub'
+"""
+want = "gcc -o thing thing.c"
+
+# git fetch — progress to stderr; outcome only.
+[filters.git-fetch]
+description = "git fetch: outcome only"
+command = '^git\s+fetch\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^remote: ',
+  '^Receiving objects',
+  '^Resolving deltas',
+  '^\s*$',
+]
+if_empty = "ok"
+
+[[filters.git-fetch.tests]]
+name = "quiet fetch acks"
+input = ""
+want = "ok"
+
+# gradle — task status noise out, result and failures in.
+[filters.gradle]
+description = "gradle: outcome and failures only"
+command = '^(\./)?gradlew?\s+\w+'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^> Task .* (UP-TO-DATE|FROM-CACHE|NO-SOURCE)$',
+  '^> Task [^ ]+$',
+  '^\s*$',
+]
+if_empty = "gradle: ok"
+
+[[filters.gradle.tests]]
+name = "task noise dropped, result kept"
+input = """
+> Task :compileJava UP-TO-DATE
+> Task :processResources
+> Task :test
+
+BUILD SUCCESSFUL in 4s
+5 actionable tasks: 2 executed, 3 up-to-date
+"""
+want = """
+BUILD SUCCESSFUL in 4s
+5 actionable tasks: 2 executed, 3 up-to-date
+"""
+
+# maven — [INFO] download/progress chatter out, result and errors in.
+[filters.maven]
+description = "maven: outcome and errors only"
+command = '^mvn\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^\[INFO\] Download(ing|ed) from ',
+  '^\[INFO\] Progress ',
+  '^\[INFO\] -+$',
+  '^\[INFO\]\s*$',
+  '^\s*$',
+]
+if_empty = "mvn: ok"
+
+[[filters.maven.tests]]
+name = "download chatter dropped, result kept"
+input = """
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/plugins/maven-clean-plugin/3.2.0/maven-clean-plugin-3.2.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/plugins/maven-clean-plugin/3.2.0/maven-clean-plugin-3.2.0.pom (5.3 kB at 21 kB/s)
+[INFO] --------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] --------------------------------------
+[INFO] Total time:  2.145 s
+"""
+want = """
+[INFO] BUILD SUCCESS
+[INFO] Total time:  2.145 s
+"""

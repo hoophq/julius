@@ -1,0 +1,81 @@
+# pip install — outcome only; resolution progress is pure noise.
+[filters.pip-install]
+description = "pip install: outcome only"
+command = '^(pip3?|python3? -m pip)\s+install\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^Collecting ',
+  '^Downloading ',
+  '^  Downloading ',
+  '^Using cached ',
+  '^  Using cached ',
+  '^Requirement already satisfied',
+  '^Installing collected packages',
+  '^Preparing metadata ',
+  '^  Preparing metadata ',
+  '^\s+\|[█▉▊▋▌▍▎▏ ]+\|',
+  '^\s*[━╸╺─]+.*(eta |B/s)',
+  '^\[notice\]',
+  '^\s*$',
+]
+if_empty = "pip install: ok"
+
+[[filters.pip-install.tests]]
+name = "install noise dropped"
+input = """
+Collecting requests
+  Downloading requests-2.32.3-py3-none-any.whl (64 kB)
+Collecting urllib3<3,>=1.21.1
+  Using cached urllib3-2.2.1-py3-none-any.whl (121 kB)
+Requirement already satisfied: idna<4,>=2.5 in ./venv/lib/python3.12/site-packages (3.7)
+Installing collected packages: urllib3, requests
+Successfully installed requests-2.32.3 urllib3-2.2.1
+
+[notice] A new release of pip is available: 24.0 -> 24.1
+"""
+want = "Successfully installed requests-2.32.3 urllib3-2.2.1"
+
+[[filters.pip-install.tests]]
+name = "errors survive"
+exit_code = 1
+input = """
+Collecting nonexistent-package-xyz
+ERROR: Could not find a version that satisfies the requirement nonexistent-package-xyz (from versions: none)
+ERROR: No matching distribution found for nonexistent-package-xyz
+"""
+want = """
+ERROR: Could not find a version that satisfies the requirement nonexistent-package-xyz (from versions: none)
+ERROR: No matching distribution found for nonexistent-package-xyz
+"""
+
+# uv — drop resolution/progress lines, keep the summary.
+[filters.uv]
+description = "uv: outcome only"
+command = '^uv\s+(pip\s+)?(install|sync|add|lock)\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^Resolved \d+ packages? in ',
+  '^Prepared \d+ packages? in ',
+  '^Downloading ',
+  '^\s*$',
+]
+if_empty = "uv: ok"
+
+[[filters.uv.tests]]
+name = "sync noise dropped"
+input = """
+Resolved 12 packages in 120ms
+Prepared 3 packages in 80ms
+Installed 3 packages in 15ms
+ + requests==2.32.3
+ + urllib3==2.2.1
+ + idna==3.7
+"""
+want = """
+Installed 3 packages in 15ms
+ + requests==2.32.3
+ + urllib3==2.2.1
+ + idna==3.7
+"""

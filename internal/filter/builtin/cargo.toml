@@ -1,0 +1,124 @@
+# cargo build / check / clippy — keep warnings, errors, and the outcome;
+# drop per-crate compilation progress.
+[filters.cargo-build]
+description = "cargo build/check/clippy: diagnostics and outcome only"
+command = '^cargo\s+(build|check|clippy)\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^\s*Compiling\s',
+  '^\s*Downloading\s',
+  '^\s*Downloaded\s',
+  '^\s*Fresh\s',
+  '^\s*Checking\s',
+  '^\s*Updating\s',
+  '^\s*Locking\s',
+  '^\s*Adding\s',
+  '^\s*$',
+]
+if_empty = "cargo: ok"
+
+[[filters.cargo-build.tests]]
+name = "clean build collapses to outcome"
+input = """
+   Compiling libc v0.2.153
+   Compiling serde v1.0.197
+   Compiling toolkit v0.1.0 (/app)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.31s
+"""
+want = "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.31s"
+
+[[filters.cargo-build.tests]]
+name = "warnings and errors survive"
+exit_code = 101
+input = """
+   Compiling toolkit v0.1.0 (/app)
+warning: unused variable: `x`
+  --> src/main.rs:4:9
+   |
+4  |     let x = 1;
+   |         ^ help: consider prefixing with an underscore
+
+error[E0308]: mismatched types
+  --> src/main.rs:7:22
+error: could not compile `toolkit` (bin "toolkit") due to 1 previous error; 1 warning emitted
+"""
+want = """
+warning: unused variable: `x`
+  --> src/main.rs:4:9
+   |
+4  |     let x = 1;
+   |         ^ help: consider prefixing with an underscore
+error[E0308]: mismatched types
+  --> src/main.rs:7:22
+error: could not compile `toolkit` (bin "toolkit") due to 1 previous error; 1 warning emitted
+"""
+
+# cargo test — failures and result lines only.
+[filters.cargo-test]
+description = "cargo test: failures and summary only"
+command = '^cargo\s+t(est)?\b'
+detect_output = ['^running \d+ tests?$', '^test result: ']
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^\s*Compiling\s',
+  '^\s*Fresh\s',
+  '^\s*Finished\s',
+  '^\s*Running\s',
+  '^\s*Doc-tests\s',
+  '^running \d+ tests?$',
+  '^test .* \.\.\. ok$',
+  '^\s*$',
+]
+if_empty = "cargo test: ok"
+
+[[filters.cargo-test.tests]]
+name = "passing run keeps result lines"
+input = """
+   Compiling toolkit v0.1.0 (/app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.52s
+     Running unittests src/main.rs (target/debug/deps/toolkit-abc123)
+
+running 3 tests
+test tests::parses_input ... ok
+test tests::rejects_bad_input ... ok
+test tests::roundtrip ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+"""
+want = "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+
+[[filters.cargo-test.tests]]
+name = "failures kept with detail"
+exit_code = 101
+input = """
+running 2 tests
+test tests::works ... ok
+test tests::broken ... FAILED
+
+failures:
+
+---- tests::broken stdout ----
+thread 'tests::broken' panicked at src/main.rs:19:9:
+assertion `left == right` failed
+  left: 2
+ right: 3
+
+failures:
+    tests::broken
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+"""
+want = """
+test tests::broken ... FAILED
+failures:
+---- tests::broken stdout ----
+thread 'tests::broken' panicked at src/main.rs:19:9:
+assertion `left == right` failed
+  left: 2
+ right: 3
+failures:
+    tests::broken
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+"""

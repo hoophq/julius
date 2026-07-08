@@ -1,0 +1,32 @@
+# brew install / upgrade — outcome and caveats; download bars out.
+[filters.brew]
+description = "brew install/upgrade: outcome and caveats only"
+command = '^brew\s+(install|upgrade|reinstall)\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^==> Downloading',
+  '^==> Fetching',
+  '^Already downloaded:',
+  '^#+',
+  '^=+>? ?[0-9.]+%',
+  '^==> Pouring',
+  '^==> Running `brew cleanup',
+  '^Disable this behaviour',
+  '^Hide these hints',
+  '^\s*$',
+]
+if_empty = "brew: ok"
+
+[[filters.brew.tests]]
+name = "download noise dropped, summary kept"
+input = """
+==> Downloading https://ghcr.io/v2/homebrew/core/wget/manifests/1.24.5
+Already downloaded: /Users/x/Library/Caches/Homebrew/wget-1.24.5
+==> Fetching wget
+==> Pouring wget--1.24.5.arm64_sonoma.bottle.tar.gz
+==> Running `brew cleanup wget`...
+Disable this behaviour by setting HOMEBREW_NO_INSTALL_CLEANUP.
+🍺  /opt/homebrew/Cellar/wget/1.24.5: 92 files, 4.5MB
+"""
+want = "🍺  /opt/homebrew/Cellar/wget/1.24.5: 92 files, 4.5MB"

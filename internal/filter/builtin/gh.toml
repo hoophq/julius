@@ -1,0 +1,38 @@
+# gh list commands — tables are dense; cap depth and line width.
+[filters.gh-list]
+description = "gh pr/issue/run/release list: capped table"
+command = '^gh\s+(pr|issue|run|release|workflow)\s+list\b'
+strip_ansi = true
+max_line_length = 140
+head = 30
+
+[[filters.gh-list.tests]]
+name = "short list unchanged"
+input = """
+ID          STATUS      TITLE           WORKFLOW    BRANCH  EVENT  ELAPSED
+2888854426  completed✓  feat: filters   ci          main    push   1m31s
+"""
+want = """
+ID          STATUS      TITLE           WORKFLOW    BRANCH  EVENT  ELAPSED
+2888854426  completed✓  feat: filters   ci          main    push   1m31s
+"""
+
+# gh pr view — keep the substance, drop the URL footer boilerplate.
+[filters.gh-pr-view]
+description = "gh pr view: capped body"
+command = '^gh\s+pr\s+view\b'
+strip_ansi = true
+head = 60
+
+[[filters.gh-pr-view.tests]]
+name = "short view unchanged"
+input = """
+title:	feat(filter): compression engine
+state:	MERGED
+author:	luanlorenzo
+"""
+want = """
+title:	feat(filter): compression engine
+state:	MERGED
+author:	luanlorenzo
+"""

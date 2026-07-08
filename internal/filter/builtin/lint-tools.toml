@@ -1,0 +1,88 @@
+# prettier --check — files needing format plus the verdict.
+[filters.prettier]
+description = "prettier: unformatted files only"
+command = '(^|\s)prettier\b|^(npx|pnpm|yarn)\s+prettier\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^Checking formatting',
+  '^\s*$',
+]
+if_empty = "prettier: all formatted"
+
+[[filters.prettier.tests]]
+name = "clean check collapses"
+input = """
+Checking formatting...
+All matched files use Prettier code style!
+"""
+want = "All matched files use Prettier code style!"
+
+[[filters.prettier.tests]]
+name = "unformatted files kept"
+exit_code = 1
+input = """
+Checking formatting...
+[warn] src/api.ts
+[warn] src/util.ts
+[warn] Code style issues found in 2 files. Run Prettier with --write to fix.
+"""
+want = """
+[warn] src/api.ts
+[warn] src/util.ts
+[warn] Code style issues found in 2 files. Run Prettier with --write to fix.
+"""
+
+# ruff — already terse; drop blank noise, ack clean runs.
+[filters.ruff]
+description = "ruff: violations and summary only"
+command = '(^|\s)ruff\s+(check|format)\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = ['^\s*$']
+if_empty = "ruff: clean"
+
+[[filters.ruff.tests]]
+name = "clean run acks"
+input = "All checks passed!\n"
+want = "All checks passed!"
+
+[[filters.ruff.tests]]
+name = "violations kept"
+exit_code = 1
+input = """
+src/app.py:12:5: F841 Local variable `x` is assigned to but never used
+
+Found 1 error.
+"""
+want = """
+src/app.py:12:5: F841 Local variable `x` is assigned to but never used
+Found 1 error.
+"""
+
+# golangci-lint run — issues and summary; drop runner chatter.
+[filters.golangci-lint]
+description = "golangci-lint: issues only"
+command = '^golangci-lint\s+run\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^level=(info|warn)',
+  '^\s*$',
+]
+if_empty = "golangci-lint: clean"
+
+[[filters.golangci-lint.tests]]
+name = "runner chatter dropped, issues kept"
+exit_code = 1
+input = """
+level=info msg="[runner] linters took 1.2s"
+internal/cli/wrap.go:42:2: ineffectual assignment to `err` (ineffassign)
+	err = doThing()
+	^
+"""
+want = """
+internal/cli/wrap.go:42:2: ineffectual assignment to `err` (ineffassign)
+	err = doThing()
+	^
+"""

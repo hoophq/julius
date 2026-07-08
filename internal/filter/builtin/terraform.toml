@@ -1,0 +1,52 @@
+# terraform plan — resource changes and the plan summary; refresh chatter out.
+[filters.terraform-plan]
+description = "terraform plan: changes and summary only"
+command = '^(terraform|tofu)\s+plan\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  ': Refreshing state\.\.\.',
+  ': Reading\.\.\.',
+  ': Read complete after',
+  '^Terraform used the selected providers',
+  '^Terraform will perform the following actions',
+  '^Unless you have made equivalent changes',
+  '^─+$',
+  '^\s*$',
+]
+if_empty = "terraform plan: no changes"
+
+[[filters.terraform-plan.tests]]
+name = "refresh chatter dropped, changes kept"
+input = """
+aws_s3_bucket.artifacts: Refreshing state... [id=my-artifacts]
+data.aws_iam_policy_document.assume: Reading...
+data.aws_iam_policy_document.assume: Read complete after 0s
+
+Terraform used the selected providers to generate the following execution plan.
+
+Terraform will perform the following actions:
+
+  # aws_s3_bucket.logs will be created
+  + resource "aws_s3_bucket" "logs" {
+      + bucket = "my-logs"
+    }
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+"""
+want = """
+  # aws_s3_bucket.logs will be created
+  + resource "aws_s3_bucket" "logs" {
+      + bucket = "my-logs"
+    }
+Plan: 1 to add, 0 to change, 0 to destroy.
+"""
+
+[[filters.terraform-plan.tests]]
+name = "no changes collapses"
+input = """
+aws_s3_bucket.artifacts: Refreshing state... [id=my-artifacts]
+
+No changes. Your infrastructure matches the configuration.
+"""
+want = "No changes. Your infrastructure matches the configuration."
