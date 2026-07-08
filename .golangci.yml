@@ -1,0 +1,15 @@
+version: "2"
+
+linters:
+  settings:
+    errcheck:
+      # Terminal writes and deferred closes: failure is not actionable in a
+      # CLI and checking them everywhere is pure noise.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (*os.File).WriteString
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*github.com/hoophq/julius/internal/ledger.Ledger).Close
