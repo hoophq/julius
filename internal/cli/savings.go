@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/hoophq/julius/internal/ledger"
+	"github.com/hoophq/julius/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -27,32 +28,42 @@ func newSavingsCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Command-output savings — estimates, last %dd\n\n", days)
+			fmt.Printf("%s %s\n\n", ui.Title("Command-output savings"), ui.Dim(fmt.Sprintf("· estimates · last %dd", days)))
 			if tot.Events == 0 {
 				fmt.Println("  no filtered commands recorded yet")
-				fmt.Println("\n  run `julius init` to install the Claude Code hook, or prefix commands manually: julius git status")
+				fmt.Printf("\n  %s\n", ui.Dim("run `julius init` to install the Claude Code hooks, or prefix commands manually: julius git status"))
 				renderAPIUsage(l, since, days)
 				return nil
 			}
+
 			pct := 0.0
 			if tot.TokensBefore > 0 {
 				pct = float64(tot.Saved()) / float64(tot.TokensBefore) * 100
 			}
-			fmt.Printf("  commands: %d   tokens: %s → %s   saved: %s (%.0f%%)\n",
-				tot.Events, fmtTokens(tot.TokensBefore), fmtTokens(tot.TokensAfter), fmtTokens(tot.Saved()), pct)
+			fmt.Printf("  commands   %s   tokens %s %s %s\n",
+				ui.Bold(fmt.Sprintf("%d", tot.Events)),
+				fmtTokens(tot.TokensBefore), ui.Dim("→"), fmtTokens(tot.TokensAfter))
+			fmt.Printf("  saved      %s %s  %s\n",
+				ui.Good(fmtTokens(tot.Saved())), ui.Pct(pct), ui.Meter(pct, 24))
+			if tot.TokensBefore/max(tot.Events, 1) < 150 {
+				fmt.Printf("\n  %s\n", ui.Dim("note: mostly quiet commands in this window — savings scale with output volume"))
+			}
 
 			top, err := l.TopCommands(since, 10)
 			if err != nil {
 				return err
 			}
 			if len(top) > 0 {
-				fmt.Println("\n  top commands by tokens saved:")
+				maxSaved := top[0].Saved()
+				fmt.Printf("\n  %s\n", ui.Dim(fmt.Sprintf("%-30s %5s %8s  %5s", "command", "runs", "saved", "avg%")))
 				for _, c := range top {
 					cmdPct := 0.0
 					if c.TokensBefore > 0 {
 						cmdPct = float64(c.Saved()) / float64(c.TokensBefore) * 100
 					}
-					fmt.Printf("    %-28s %8s saved  %3.0f%%  (%d runs)\n", truncate(c.Command, 28), fmtTokens(c.Saved()), cmdPct, c.Events)
+					fmt.Printf("  %-30s %5d %8s  %s  %s\n",
+						truncate(c.Command, 30), c.Events, fmtTokens(c.Saved()), ui.Pct(cmdPct),
+						ui.Bar(c.Saved(), maxSaved, 10))
 				}
 			}
 			renderAPIUsage(l, since, days)
@@ -68,19 +79,23 @@ func newSavingsCmd() *cobra.Command {
 func renderAPIUsage(l *ledger.Ledger, since time.Time, days int) {
 	api, err := l.APIUsage(since)
 	if err != nil || api.Calls == 0 {
-		fmt.Println("\nAPI usage — exact, provider-reported: none recorded. Run `julius proxy serve` and point apps at it.")
+		fmt.Printf("\n%s %s\n  %s\n",
+			ui.Title("API usage"), ui.Dim("· exact, provider-reported"),
+			ui.Dim("none recorded — run `julius proxy serve` and point apps at it"))
 		return
 	}
-	fmt.Printf("\nAPI usage — exact, provider-reported, last %dd\n\n", days)
-	fmt.Printf("  calls: %d   input: %s   output: %s   cache read: %s   cache write: %s\n",
-		api.Calls, fmtTokens(api.Input), fmtTokens(api.Output), fmtTokens(api.CacheRead), fmtTokens(api.CacheWrite))
+	fmt.Printf("\n%s %s\n\n", ui.Title("API usage"), ui.Dim(fmt.Sprintf("· exact, provider-reported · last %dd", days)))
+	fmt.Printf("  calls %s   in %s   out %s   cache %s %s / %s %s\n",
+		ui.Bold(fmt.Sprintf("%d", api.Calls)),
+		ui.Bold(fmtTokens(api.Input)), ui.Bold(fmtTokens(api.Output)),
+		ui.Dim("read"), fmtTokens(api.CacheRead), ui.Dim("write"), fmtTokens(api.CacheWrite))
 	byApp, err := l.APIUsageByApp(since, 10)
 	if err != nil || len(byApp) == 0 {
 		return
 	}
-	fmt.Println("\n  by app and model:")
+	fmt.Printf("\n  %s\n", ui.Dim(fmt.Sprintf("%-16s %-24s %9s %9s %7s", "app", "model", "in", "out", "calls")))
 	for _, a := range byApp {
-		fmt.Printf("    %-16s %-24s %8s in  %8s out  (%d calls)\n",
+		fmt.Printf("  %-16s %-24s %9s %9s %7d\n",
 			truncate(a.AppTag, 16), truncate(a.Model, 24), fmtTokens(a.Input), fmtTokens(a.Output), a.Calls)
 	}
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/hoophq/julius/internal/execx"
 	"github.com/hoophq/julius/internal/ledger"
+	"github.com/hoophq/julius/internal/ui"
 )
 
 // Check is one doctor verification result.
@@ -69,12 +70,12 @@ func Doctor(cwd string) []Check {
 func Render(checks []Check, w interface{ Write([]byte) (int, error) }) bool {
 	ok := true
 	for _, c := range checks {
-		mark := "PASS"
+		mark := ui.Good("PASS")
 		if !c.OK {
-			mark = "FAIL"
+			mark = ui.Bad("FAIL")
 			ok = false
 		}
-		fmt.Fprintf(w, "%s  %-30s %s\n", mark, c.Name, c.Detail)
+		fmt.Fprintf(w, "%s  %-30s %s\n", mark, c.Name, ui.Dim(c.Detail))
 	}
 	return ok
 }

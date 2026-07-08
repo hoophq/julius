@@ -8,6 +8,7 @@ import (
 
 	"github.com/hoophq/julius/internal/filter"
 	"github.com/hoophq/julius/internal/scan"
+	"github.com/hoophq/julius/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -33,29 +34,34 @@ func newScanCmd() *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(rep)
 			}
 
-			fmt.Printf("Scanned %d sessions, last %dd — %d bash commands, %d already wrapped\n",
-				rep.Sessions, days, rep.BashCommands, rep.Wrapped)
+			fmt.Printf("%s %s\n", ui.Title("Scan"),
+				ui.Dim(fmt.Sprintf("· %d sessions · last %dd · %d bash commands, %d already wrapped",
+					rep.Sessions, days, rep.BashCommands, rep.Wrapped)))
 
 			if len(rep.Missed) == 0 && len(rep.Candidates) == 0 {
-				fmt.Println("\n  nothing missed — julius covered everything it could")
+				fmt.Printf("\n  %s\n", ui.Good("nothing missed — julius covered everything it could"))
 				return nil
 			}
 			if len(rep.Missed) > 0 {
-				fmt.Println("\n  ran unwrapped — measured savings julius would have delivered:")
+				fmt.Printf("\n  %s\n", ui.Bold("ran unwrapped — measured savings julius would have delivered:"))
+				maxSaved := rep.Missed[0].Saved()
 				for i, m := range rep.Missed {
 					if i >= 10 {
 						break
 					}
-					fmt.Printf("    %-24s %8s tokens  (%d runs)\n", m.Command, fmtTokens(m.Saved()), m.Runs)
+					fmt.Printf("    %-24s %s %s  %s\n", m.Command, ui.Good(fmt.Sprintf("%8s", fmtTokens(m.Saved()))),
+						ui.Dim(fmt.Sprintf("(%d runs)", m.Runs)), ui.Bar(m.Saved(), maxSaved, 10))
 				}
 			}
 			if len(rep.Candidates) > 0 {
-				fmt.Println("\n  no filter yet — top candidates by output volume:")
+				fmt.Printf("\n  %s\n", ui.Bold("no filter yet — top candidates by output volume:"))
+				maxTokens := rep.Candidates[0].Tokens
 				for i, c := range rep.Candidates {
 					if i >= 10 {
 						break
 					}
-					fmt.Printf("    %-24s %8s tokens  (%d runs)\n", c.Family, fmtTokens(c.Tokens), c.Runs)
+					fmt.Printf("    %-24s %s %s  %s\n", truncate(c.Family, 24), ui.Warn(fmt.Sprintf("%8s", fmtTokens(c.Tokens))),
+						ui.Dim(fmt.Sprintf("(%d runs)", c.Runs)), ui.Bar(c.Tokens, maxTokens, 10))
 				}
 			}
 			return nil
