@@ -69,7 +69,7 @@ func buildCorpus() []corpusCase {
 	}
 }
 
-// TestCorpusSavings is the M1 acceptance gate: the filter wave must save
+// TestCorpusSavings guards the headline claim: built-in filters must save
 // at least 60% of tokens on average across representative outputs.
 func TestCorpusSavings(t *testing.T) {
 	reg := Load(t.TempDir()) // no project/user tiers: builtins only
