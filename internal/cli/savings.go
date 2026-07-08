@@ -47,7 +47,11 @@ func newSavingsCmd() *cobra.Command {
 			if len(top) > 0 {
 				fmt.Println("\n  top commands by tokens saved:")
 				for _, c := range top {
-					fmt.Printf("    %-28s %8s saved  (%d runs)\n", truncate(c.Command, 28), fmtTokens(c.Saved()), c.Events)
+					cmdPct := 0.0
+					if c.TokensBefore > 0 {
+						cmdPct = float64(c.Saved()) / float64(c.TokensBefore) * 100
+					}
+					fmt.Printf("    %-28s %8s saved  %3.0f%%  (%d runs)\n", truncate(c.Command, 28), fmtTokens(c.Saved()), cmdPct, c.Events)
 				}
 			}
 			fmt.Println("\nAPI usage — exact, provider-reported: available with `julius proxy` (coming soon)")

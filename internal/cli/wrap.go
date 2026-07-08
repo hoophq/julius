@@ -62,14 +62,19 @@ func wrap(argv []string) int {
 		fmt.Println(output)
 	}
 
-	record(ledger.HookEvent{
-		Kind:         "command",
-		Tool:         "cli",
-		Command:      cmdline,
-		TokensBefore: tokens.Estimate(raw),
-		TokensAfter:  tokens.Estimate(res.Output),
-		RawPath:      rawPath,
-	})
+	// Commands with no output (git commit -q, silent git add) have nothing
+	// to save; recording them would only pollute the savings statistics
+	// with the one-token acks the filter emits.
+	if before := tokens.Estimate(raw); before > 0 {
+		record(ledger.HookEvent{
+			Kind:         "command",
+			Tool:         "cli",
+			Command:      cmdline,
+			TokensBefore: before,
+			TokensAfter:  tokens.Estimate(res.Output),
+			RawPath:      rawPath,
+		})
+	}
 
 	return outc.ExitCode
 }
