@@ -18,9 +18,10 @@ const HookCommand = "julius hook claude-pre"
 // PostHookCommand is the command Claude Code runs on PostToolUse events.
 const PostHookCommand = "julius hook claude-post"
 
-// PostHookMatcher limits PostToolUse to tools julius knows how to compress.
-// Read is deliberately absent: its content feeds exact-match edits.
-const PostHookMatcher = "Bash|Grep|Glob"
+// PostHookMatcher limits PostToolUse to tools julius knows how to handle.
+// Read events are used only for session-level deduplication of repeated
+// reads — fresh file content is never rewritten.
+const PostHookMatcher = "Bash|Grep|Glob|Read"
 
 // PatchMode controls whether Init modifies settings without asking.
 type PatchMode int
@@ -47,15 +48,18 @@ func SettingsPath(global bool, cwd string) (string, error) {
 }
 
 // Installed reports whether BOTH julius hooks are registered in the given
-// settings file. Partial installs (older versions registered only the
-// PreToolUse hook) report false so Init upgrades them in place.
+// settings file with the current matcher. Partial or outdated installs
+// (missing post hook, stale matcher) report false so Init upgrades them
+// in place.
 func Installed(path string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
 	s := string(data)
-	return strings.Contains(s, HookCommand) && strings.Contains(s, PostHookCommand)
+	return strings.Contains(s, HookCommand) &&
+		strings.Contains(s, PostHookCommand) &&
+		strings.Contains(s, PostHookMatcher)
 }
 
 // Init registers the julius PreToolUse hook in Claude Code settings.
@@ -142,10 +146,20 @@ func patchSettings(path string) error {
 }
 
 // ensureHook appends an event entry unless the command is already present,
-// keeping repeated Init runs idempotent per hook.
+// keeping repeated Init runs idempotent per hook. When the command exists
+// under an outdated matcher, the matcher is upgraded in place.
 func ensureHook(hooks map[string]any, event, matcher, command string) {
 	entries, _ := hooks[event].([]any)
-	if raw, err := json.Marshal(entries); err == nil && strings.Contains(string(raw), command) {
+	for _, e := range entries {
+		entry, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		raw, err := json.Marshal(entry)
+		if err != nil || !strings.Contains(string(raw), command) {
+			continue
+		}
+		entry["matcher"] = matcher
 		return
 	}
 	entries = append(entries, map[string]any{

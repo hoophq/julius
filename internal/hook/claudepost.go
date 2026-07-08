@@ -9,6 +9,7 @@ import (
 	"github.com/hoophq/julius/internal/filter"
 	"github.com/hoophq/julius/internal/ledger"
 	"github.com/hoophq/julius/internal/router"
+	"github.com/hoophq/julius/internal/session"
 	"github.com/hoophq/julius/internal/tokens"
 )
 
@@ -57,17 +58,88 @@ func ProcessPostToolUse(r io.Reader, w io.Writer, reg *filter.Registry, rec Reco
 		return
 	}
 
+	cache := session.Open(in.SessionID)
 	switch in.ToolName {
 	case "Bash":
-		processBash(in, w, reg, rec)
+		processBash(in, w, reg, cache, rec)
 	case "Grep":
 		processGrep(in, w, rec)
 	case "Glob":
 		processGlob(in, w, rec)
+	case "Read":
+		processRead(in, w, cache, rec)
+	}
+	session.PurgeOld()
+}
+
+// processRead deduplicates repeated reads of the same file within a session.
+// Fresh content is NEVER rewritten (it feeds exact-match edits); julius only
+// acts when the agent already holds this exact content in context:
+//
+//	identical re-read → short marker
+//	changed re-read   → compact diff against the version in context
+//	                    (full content when the change is too large to diff
+//	                    profitably)
+//
+// Partial reads (offset/limit) bypass dedup entirely and refresh nothing.
+func processRead(in postToolUseInput, w io.Writer, cache *session.Cache, rec Recorder) {
+	var ti struct {
+		FilePath string `json:"file_path"`
+		Offset   int    `json:"offset"`
+		Limit    int    `json:"limit"`
+	}
+	_ = json.Unmarshal(in.ToolInput, &ti)
+	if ti.Offset > 0 || ti.Limit > 0 || ti.FilePath == "" {
+		return
+	}
+	file, _ := in.ToolResponse["file"].(map[string]any)
+	content, _ := file["content"].(string)
+	if len(content) < postMinBytes {
+		return
+	}
+
+	key := "read:" + ti.FilePath
+	prev, seen := cache.Load(key)
+	cache.Store(key, []byte(content))
+	if !seen {
+		return
+	}
+
+	var replacement string
+	switch {
+	case string(prev) == content:
+		replacement = fmt.Sprintf(
+			"[julius] %s is unchanged since your last read in this session (%d lines) — the full content is already in context above. Re-read with offset/limit to force full output.",
+			ti.FilePath, len(strings.Split(content, "\n")))
+	default:
+		d, ok := session.Diff(string(prev), content)
+		newLines := len(strings.Split(content, "\n"))
+		if !ok || len(strings.Split(d, "\n"))*10 > newLines*4 { // diff > 40% of file
+			return
+		}
+		replacement = fmt.Sprintf(
+			"[julius] %s changed since your last read — diff against the version in context above (-old/+new). Re-read with offset/limit to force full output.\n%s",
+			ti.FilePath, d)
+	}
+	if tokens.Estimate(replacement) >= tokens.Estimate(content) {
+		return
+	}
+
+	newFile := make(map[string]any, len(file))
+	for k, v := range file {
+		newFile[k] = v
+	}
+	newFile["content"] = replacement
+	emit(w, in.ToolResponse, map[string]any{"file": newFile})
+	if rec != nil {
+		rec(ledger.HookEvent{
+			SessionID: in.SessionID, Kind: "session_dedup", Tool: "Read", Command: "read " + ti.FilePath,
+			TokensBefore: tokens.Estimate(content), TokensAfter: tokens.Estimate(replacement),
+		})
 	}
 }
 
-func processBash(in postToolUseInput, w io.Writer, reg *filter.Registry, rec Recorder) {
+func processBash(in postToolUseInput, w io.Writer, reg *filter.Registry, cache *session.Cache, rec Recorder) {
 	var ti struct {
 		Command string `json:"command"`
 	}
@@ -83,6 +155,25 @@ func processBash(in postToolUseInput, w io.Writer, reg *filter.Registry, rec Rec
 
 	stdout, _ := in.ToolResponse["stdout"].(string)
 	if len(stdout) < postMinBytes {
+		return
+	}
+
+	// Identical re-run of the same command in this session: the agent
+	// already holds this exact output in context.
+	key := "bash:" + ti.Command
+	prev, seen := cache.Load(key)
+	cache.Store(key, []byte(stdout))
+	if seen && string(prev) == stdout {
+		marker := fmt.Sprintf(
+			"[julius] output is identical to the previous run of this command in this session (%d lines) — see the earlier result above.",
+			len(strings.Split(stdout, "\n")))
+		emit(w, in.ToolResponse, map[string]any{"stdout": marker})
+		if rec != nil {
+			rec(ledger.HookEvent{
+				SessionID: in.SessionID, Kind: "session_dedup", Tool: "Bash", Command: ti.Command,
+				TokensBefore: tokens.Estimate(stdout), TokensAfter: tokens.Estimate(marker),
+			})
+		}
 		return
 	}
 
