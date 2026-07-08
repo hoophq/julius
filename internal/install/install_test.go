@@ -13,17 +13,17 @@ func TestInitIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
 
-	if err := Init(false, false, PatchAuto, dir, strings.NewReader(""), &out); err != nil {
+	if err := Init(false, PatchAuto, dir, strings.NewReader(""), &out); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, ".claude", "settings.local.json")
+	path := filepath.Join(dir, ".claude", "settings.json")
 	first, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// second run must change nothing
-	if err := Init(false, false, PatchAuto, dir, strings.NewReader(""), &out); err != nil {
+	if err := Init(false, PatchAuto, dir, strings.NewReader(""), &out); err != nil {
 		t.Fatal(err)
 	}
 	second, err := os.ReadFile(path)
@@ -40,7 +40,7 @@ func TestInitIsIdempotent(t *testing.T) {
 
 func TestInitPreservesExistingSettings(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".claude", "settings.local.json")
+	path := filepath.Join(dir, ".claude", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestInitPreservesExistingSettings(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := Init(false, false, PatchAuto, dir, strings.NewReader(""), &out); err != nil {
+	if err := Init(false, PatchAuto, dir, strings.NewReader(""), &out); err != nil {
 		t.Fatal(err)
 	}
 
@@ -84,10 +84,10 @@ func TestInitPreservesExistingSettings(t *testing.T) {
 func TestInitSkipModePrintsInstructions(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
-	if err := Init(false, false, PatchSkip, dir, strings.NewReader(""), &out); err != nil {
+	if err := Init(false, PatchSkip, dir, strings.NewReader(""), &out); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.local.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); !os.IsNotExist(err) {
 		t.Error("skip mode must not create settings")
 	}
 	if !strings.Contains(out.String(), HookCommand) {
