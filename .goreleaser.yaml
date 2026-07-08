@@ -26,6 +26,15 @@ archives:
 checksum:
   name_template: checksums.txt
 
+homebrew_casks:
+  - name: julius
+    repository:
+      owner: hoophq
+      name: tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://github.com/hoophq/julius
+    description: Cut LLM token usage on command output and API traffic
+
 changelog:
   sort: asc
   filters:
