@@ -1,0 +1,2 @@
+# Force LF everywhere — filter fixtures and inline tests are byte-exact.
+* text=auto eol=lf
