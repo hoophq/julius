@@ -15,6 +15,13 @@ import (
 // HookCommand is the command Claude Code runs on PreToolUse events.
 const HookCommand = "julius hook claude-pre"
 
+// PostHookCommand is the command Claude Code runs on PostToolUse events.
+const PostHookCommand = "julius hook claude-post"
+
+// PostHookMatcher limits PostToolUse to tools julius knows how to compress.
+// Read is deliberately absent: its content feeds exact-match edits.
+const PostHookMatcher = "Bash|Grep|Glob"
+
 // PatchMode controls whether Init modifies settings without asking.
 type PatchMode int
 
@@ -39,14 +46,16 @@ func SettingsPath(global bool, cwd string) (string, error) {
 	return filepath.Join(cwd, ".claude", "settings.json"), nil
 }
 
-// Installed reports whether the julius hook is registered in the given
-// settings file.
+// Installed reports whether BOTH julius hooks are registered in the given
+// settings file. Partial installs (older versions registered only the
+// PreToolUse hook) report false so Init upgrades them in place.
 func Installed(path string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(data), HookCommand)
+	s := string(data)
+	return strings.Contains(s, HookCommand) && strings.Contains(s, PostHookCommand)
 }
 
 // Init registers the julius PreToolUse hook in Claude Code settings.
@@ -107,14 +116,8 @@ func patchSettings(path string) error {
 	if hooks == nil {
 		hooks = map[string]any{}
 	}
-	pre, _ := hooks["PreToolUse"].([]any)
-	pre = append(pre, map[string]any{
-		"matcher": "Bash",
-		"hooks": []any{
-			map[string]any{"type": "command", "command": HookCommand},
-		},
-	})
-	hooks["PreToolUse"] = pre
+	ensureHook(hooks, "PreToolUse", "Bash", HookCommand)
+	ensureHook(hooks, "PostToolUse", PostHookMatcher, PostHookCommand)
 	settings["hooks"] = hooks
 
 	out, err := json.MarshalIndent(settings, "", "  ")
@@ -138,6 +141,22 @@ func patchSettings(path string) error {
 	return os.Rename(tmp, path)
 }
 
+// ensureHook appends an event entry unless the command is already present,
+// keeping repeated Init runs idempotent per hook.
+func ensureHook(hooks map[string]any, event, matcher, command string) {
+	entries, _ := hooks[event].([]any)
+	if raw, err := json.Marshal(entries); err == nil && strings.Contains(string(raw), command) {
+		return
+	}
+	entries = append(entries, map[string]any{
+		"matcher": matcher,
+		"hooks": []any{
+			map[string]any{"type": "command", "command": command},
+		},
+	})
+	hooks[event] = entries
+}
+
 func printManual(w io.Writer, path string) {
 	fmt.Fprintf(w, `Add this to %s under "hooks":
 
@@ -146,8 +165,14 @@ func printManual(w io.Writer, path string) {
       "matcher": "Bash",
       "hooks": [{ "type": "command", "command": "%s" }]
     }
+  ],
+  "PostToolUse": [
+    {
+      "matcher": "%s",
+      "hooks": [{ "type": "command", "command": "%s" }]
+    }
   ]
-`, path, HookCommand)
+`, path, HookCommand, PostHookMatcher, PostHookCommand)
 }
 
 func isTerminal(f *os.File) bool {

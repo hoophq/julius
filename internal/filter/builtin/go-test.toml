@@ -2,6 +2,7 @@
 [filters.go-test]
 description = "go test: failures and summary only"
 command = '^go\s+test\b'
+detect_output = ['^=== RUN\s', '^--- (PASS|FAIL): ']
 strip_ansi = true
 drop_lines = [
   '^=== RUN\b',

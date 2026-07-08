@@ -34,7 +34,10 @@ func TestInitIsIdempotent(t *testing.T) {
 		t.Errorf("init is not idempotent:\nfirst:  %s\nsecond: %s", first, second)
 	}
 	if got := strings.Count(string(second), HookCommand); got != 1 {
-		t.Errorf("hook registered %d times, want exactly 1", got)
+		t.Errorf("pre hook registered %d times, want exactly 1", got)
+	}
+	if got := strings.Count(string(second), PostHookCommand); got != 1 {
+		t.Errorf("post hook registered %d times, want exactly 1", got)
 	}
 }
 

@@ -56,6 +56,20 @@ func (r *Registry) Pick(cmd string) Filter {
 // Builtin exposes the embedded specs (used by tests and docs generation).
 func (r *Registry) Builtin() []*Spec { return r.builtin }
 
+// Sniff returns the spec whose detect_output patterns match the raw text,
+// or nil. Used when output arrives without a trustworthy command line
+// (native tool results, unrouted commands).
+func (r *Registry) Sniff(text string) *Spec {
+	for _, tier := range [][]*Spec{r.project, r.user, r.builtin} {
+		for _, s := range tier {
+			if s.MatchOutput(text) {
+				return s
+			}
+		}
+	}
+	return nil
+}
+
 func loadTier(path string) []*Spec {
 	data, err := os.ReadFile(path)
 	if err != nil {

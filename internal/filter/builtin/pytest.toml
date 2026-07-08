@@ -2,6 +2,7 @@
 [filters.pytest]
 description = "pytest: failures and summary only"
 command = '(^|\s)pytest\b|^python -m pytest\b'
+detect_output = ['^={5,} .*(passed|failed|error).*={5,}$', '^collected \d+ items$']
 strip_ansi = true
 drop_lines = [
   '^platform ',

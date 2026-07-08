@@ -19,7 +19,8 @@ type File struct {
 //	max_line_length → head/tail → if_empty
 type Spec struct {
 	Description string        `toml:"description"`
-	Command     string        `toml:"command"` // regex matched against the command line
+	Command     string        `toml:"command"`       // regex matched against the command line
+	DetectOutput []string     `toml:"detect_output"` // regexes matched against raw OUTPUT (content sniffing)
 	StripANSI   bool          `toml:"strip_ansi"`
 	MergeStderr bool          `toml:"merge_stderr"`
 	Replace     []Replacement `toml:"replace"`
@@ -34,6 +35,7 @@ type Spec struct {
 
 	name    string
 	cmdRe   *regexp.Regexp
+	detRe   []*regexp.Regexp
 	replRe  []*regexp.Regexp
 	respRe  []*regexp.Regexp
 	unlRe   []*regexp.Regexp
@@ -90,6 +92,13 @@ func (s *Spec) compile(name string) error {
 	if s.cmdRe, err = regexp.Compile(s.Command); err != nil {
 		return fmt.Errorf("command: %w", err)
 	}
+	for _, p := range s.DetectOutput {
+		re, err := regexp.Compile("(?m)" + p)
+		if err != nil {
+			return fmt.Errorf("detect_output %q: %w", p, err)
+		}
+		s.detRe = append(s.detRe, re)
+	}
 	for _, r := range s.Replace {
 		re, err := regexp.Compile(r.Pattern)
 		if err != nil {
@@ -133,6 +142,18 @@ func (s *Spec) Name() string { return s.name }
 
 // MatchCommand implements Filter.
 func (s *Spec) MatchCommand(cmd string) bool { return s.cmdRe.MatchString(cmd) }
+
+// MatchOutput reports whether raw output looks like the format this spec
+// filters, independent of which command produced it. Specs without
+// detect_output patterns never match by content.
+func (s *Spec) MatchOutput(text string) bool {
+	for _, re := range s.detRe {
+		if re.MatchString(text) {
+			return true
+		}
+	}
+	return false
+}
 
 // Apply implements Filter. Callers must pass the result through Finalize.
 func (s *Spec) Apply(raw string, exitCode int) Result {

@@ -28,3 +28,13 @@ truncation or loss. Findings that constrain the design:
   must skip commands already rewritten to `julius ...` (no double
   filtering), skip small outputs, and apply the engine's never-larger
   guard unconditionally.
+
+## Read results are never rewritten (2026-07-08)
+
+The PostToolUse processor compresses Bash, Grep (content mode), and Glob
+results, but deliberately leaves Read untouched: agents build exact-match
+edits from the file content they read, and any rewriting of that content
+(stripped lines, shifted line numbers) risks corrupting subsequent edits.
+Savings on file reads come from session-level deduplication of repeated
+reads instead, where the agent already holds the identical content in
+context.
