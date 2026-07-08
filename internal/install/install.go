@@ -28,7 +28,12 @@ const (
 )
 
 // SettingsPath returns the Claude Code settings file Init would modify.
-func SettingsPath(global bool, cwd string) (string, error) {
+//
+// Project installs default to settings.local.json — the hook needs the
+// julius binary on the developer's PATH, so it's personal configuration.
+// shared=true targets the checked-in settings.json for teams that want
+// the hook to apply to everyone.
+func SettingsPath(global, shared bool, cwd string) (string, error) {
 	if global {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -36,7 +41,11 @@ func SettingsPath(global bool, cwd string) (string, error) {
 		}
 		return filepath.Join(home, ".claude", "settings.json"), nil
 	}
-	return filepath.Join(cwd, ".claude", "settings.json"), nil
+	name := "settings.local.json"
+	if shared {
+		name = "settings.json"
+	}
+	return filepath.Join(cwd, ".claude", name), nil
 }
 
 // Installed reports whether the julius hook is registered in the given
@@ -50,8 +59,8 @@ func Installed(path string) bool {
 }
 
 // Init registers the julius PreToolUse hook in Claude Code settings.
-func Init(global bool, mode PatchMode, cwd string, stdin io.Reader, stdout io.Writer) error {
-	path, err := SettingsPath(global, cwd)
+func Init(global, shared bool, mode PatchMode, cwd string, stdin io.Reader, stdout io.Writer) error {
+	path, err := SettingsPath(global, shared, cwd)
 	if err != nil {
 		return err
 	}

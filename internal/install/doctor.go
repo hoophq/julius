@@ -29,8 +29,10 @@ func Doctor(cwd string) []Check {
 
 	hookFound := false
 	var hookWhere string
-	for _, global := range []bool{true, false} {
-		if path, err := SettingsPath(global, cwd); err == nil && Installed(path) {
+	for _, loc := range []struct{ global, shared bool }{
+		{global: true}, {shared: false}, {shared: true},
+	} {
+		if path, err := SettingsPath(loc.global, loc.shared, cwd); err == nil && Installed(path) {
 			hookFound = true
 			hookWhere = path
 			break
