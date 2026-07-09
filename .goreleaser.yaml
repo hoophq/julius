@@ -30,7 +30,7 @@ homebrew_casks:
   - name: julius
     repository:
       owner: hoophq
-      name: tap
+      name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/hoophq/julius
     description: Cut LLM token usage on command output and API traffic
