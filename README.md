@@ -29,9 +29,11 @@ go install github.com/hoophq/julius/cmd/julius@latest
 ## Quickstart (Claude Code)
 
 ```sh
-julius init -g      # registers the hooks in ~/.claude/settings.json (or `julius init` for one project)
+julius init -g      # global: hooks in ~/.claude/settings.json, active in every project
 julius doctor       # verifies everything is wired up
 ```
+
+To scope julius to a single project instead, run `julius init` (no flag) inside it — the hooks land in that project's `.claude/settings.json` only.
 
 Start a new session and work normally. Commands the agent runs are rewritten through julius transparently; native Read/Grep/Glob results are deduplicated and bounded. Then:
 
