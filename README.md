@@ -9,7 +9,7 @@ Coding agents spend most of their context window on low-signal output — test r
 
 julius sits between the noise and the model:
 
-- **Command-output compression** — dev commands (git, test runners, linters, docker, package managers) return a compressed, high-signal version of their output. **60–90% savings on supported commands**, measured, with the full raw output always recoverable from disk.
+- **Command-output compression** — dev commands (git, test runners, linters, docker, package managers) return a compressed, high-signal version of their output. **Typically 60–90% savings on supported commands**, measured, with the full raw output always recoverable from disk.
 - **Native tool interception** — file re-reads collapse to a marker when nothing changed (or a diff when something did), repeated command outputs dedupe, search results get bounded. This works on your agent's built-in tools, not just shell commands.
 - **API usage metering** — point any script at the julius local proxy (`ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL`) and get exact, provider-reported token usage per app and model. No code changes, no TLS tricks, payloads forwarded byte-for-byte.
 
@@ -29,7 +29,7 @@ go install github.com/hoophq/julius/cmd/julius@latest
 ## Quickstart (Claude Code)
 
 ```sh
-julius init -g      # registers the hooks in ~/.claude/settings.json
+julius init -g      # registers the hooks in ~/.claude/settings.json (or `julius init` for one project)
 julius doctor       # verifies everything is wired up
 ```
 
@@ -40,14 +40,15 @@ julius savings
 ```
 
 ```
-Command-output savings — estimates, last 30d
+Command-output savings · estimates · last 30d
 
-  commands: 214   tokens: 182.4k → 31.1k   saved: 151.3k (83%)
+  commands   214   tokens 182.4k → 31.1k
+  saved      151.3k  83%  ████████████████████░░░░
 
-  top commands by tokens saved:
-    go test -v ./...             48.2k saved   93%  (12 runs)
-    npm install                  22.1k saved   96%  (4 runs)
-    ...
+  command                         runs    saved   avg%
+  go test -v ./...                  12    48.2k   93%  ▪▪▪▪▪▪▪▪▪▪
+  npm install                        4    22.1k   96%  ▪▪▪▪
+  ...
 ```
 
 ## How it works

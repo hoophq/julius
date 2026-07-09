@@ -22,13 +22,19 @@ drop_lines = [                      # drop lines matching any of these
 ]
 if_empty = "my-tool build: ok"      # emitted when everything was dropped
 
-[[filters.my-tool.tests]]           # inline tests, run by `go test`
+[[filters.my-tool.tests]]           # inline tests (see "Testing filters" below)
 name = "clean build collapses"
 input = """
 Downloading dependency graph
 Downloading artifacts
 """
 want = "my-tool build: ok"
+
+[[filters.my-tool.tests]]
+name = "failure survives"
+exit_code = 1                       # the wrapped command's exit code
+input = "error: linker failed on module core"
+want = "error: linker failed on module core"
 ```
 
 ## Pipeline stages
@@ -54,8 +60,26 @@ You don't need to be careful — the engine is:
 
 - If your filter produces **more** tokens than the raw output, the raw output wins.
 - If your filter empties non-empty output, the raw output wins.
-- On failing commands, the full raw output is stashed to disk and the filtered
-  output carries a `[julius] raw output: <path>` pointer.
+- When a wrapped command fails, the full raw output is stashed to disk and the
+  filtered output carries a `[julius] raw output: <path>` pointer.
+
+## Testing filters
+
+For **project and user filters**, validate by running the command through
+julius directly and comparing against the raw version:
+
+```sh
+julius my-tool build        # filtered
+julius raw my-tool build    # unfiltered, for comparison
+```
+
+A broken pattern can't hurt you — the engine guarantees above catch filters
+that inflate or empty the output, and a filter file that fails to parse is
+skipped with a warning rather than breaking your commands.
+
+For **built-in filters** (contributions to this repo), the inline
+`[[filters.X.tests]]` cases are executed by `go test` and every filter must
+ship at least one.
 
 ## Guidelines
 
@@ -65,6 +89,5 @@ You don't need to be careful — the engine is:
   filter can't surface anything the command didn't already print.
 - **Write tests for both directions**: a noisy success collapsing, and a failure
   surviving intact.
-- Every built-in filter must ship at least one inline test — the suite fails
-  otherwise. The savings gate in `internal/filter/savings_test.go` keeps the
-  headline claim honest; add a corpus case if your filter targets a heavyweight.
+- The savings gate in `internal/filter/savings_test.go` keeps the headline
+  claim honest; add a corpus case if your built-in filter targets a heavyweight.

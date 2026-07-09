@@ -13,7 +13,7 @@ under the 10ms budget, imperceptible per command. Verified live: the model
 issues the plain command, the transcript records the rewritten one, and the
 compressed output is what enters context.
 
-**PostToolUse output replacement** (`julius hook claude-post`) — planned.
+**PostToolUse output replacement** (`julius hook claude-post`) — shipped 2026-07-08.
 `hookSpecificOutput.updatedToolOutput` fully replaces the tool output the
 model sees; validated with a 46.9KB replacement payload delivered without
 truncation or loss. Findings that constrain the design:
