@@ -81,6 +81,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "julius proxy: "+err.Error(), http.StatusBadGateway)
 		return
 	}
+	// Preserve the declared body length: without it Go falls back to
+	// chunked transfer encoding, which some upstreams and middleboxes
+	// mishandle (a Content-Length reader sees an empty body).
+	if r.ContentLength >= 0 {
+		req.ContentLength = r.ContentLength
+	}
 	copyHeaders(req.Header, r.Header)
 	req.Header.Del(appTagHeader)
 

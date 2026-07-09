@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -128,6 +129,37 @@ func TestProxySequentialCallsAllMetered(t *testing.T) {
 	defer rec.mu.Unlock()
 	if rec.n != 3 {
 		t.Errorf("3 sequential calls recorded %d times, want 3", rec.n)
+	}
+}
+
+func TestProxyForwardsContentLength(t *testing.T) {
+	var gotLen string
+	var gotBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotLen = r.Header.Get("Content-Length")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer upstream.Close()
+
+	srv := New(nil)
+	srv.upstreams["anthropic"] = upstream.URL
+	front := httptest.NewServer(srv)
+	defer front.Close()
+
+	payload := `{"model":"claude-opus-4-8","stream":true}`
+	resp, err := http.Post(front.URL+"/anthropic/v1/messages", "application/json", strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if gotLen != fmt.Sprintf("%d", len(payload)) {
+		t.Errorf("upstream Content-Length = %q, want %d (chunked forwarding breaks length-framed readers)", gotLen, len(payload))
+	}
+	if string(gotBody) != payload {
+		t.Errorf("body not forwarded intact: %q", gotBody)
 	}
 }
 
