@@ -18,12 +18,18 @@ case "$os" in
   *) echo "julius: unsupported OS: $os (Windows: download from GitHub releases)" >&2; exit 1 ;;
 esac
 
-tag=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" |
-  grep '"tag_name"' | head -1 | cut -d'"' -f4)
-if [ -z "$tag" ]; then
-  echo "julius: could not determine the latest release" >&2
-  exit 1
-fi
+# Resolve the latest tag from the releases redirect, not the GitHub API:
+# the API's unauthenticated rate limit (60/h per IP) breaks installs on
+# CI and shared networks.
+tag=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" || true)
+tag=${tag##*/}
+case "$tag" in
+  v[0-9]*) ;;
+  *)
+    echo "julius: could not determine the latest release" >&2
+    exit 1
+    ;;
+esac
 
 version=${tag#v}
 url="https://github.com/$REPO/releases/download/$tag/julius_${version}_${os}_${arch}.tar.gz"
