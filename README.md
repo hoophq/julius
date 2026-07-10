@@ -88,6 +88,16 @@ JULIUS_COMPRESS_APPS=my-agent julius proxy serve   # comma-separated tags, or "*
 
 Only tool results are touched — Anthropic `tool_result` blocks and OpenAI `role:"tool"` messages. System prompts, user text, tool-call arguments, error results, and image/document blocks always pass through untouched, and any body that doesn't parse as JSON is forwarded verbatim. The savings are estimates and get their own section in `julius savings`, never mixed into the exact metering numbers.
 
+### Prompt-cache hints (opt-in)
+
+Anthropic prompt caching bills repeated request prefixes at ~10% of the input price — but only when the request opts in. Many apps never do. Opt an app in and the proxy adds the hint for it:
+
+```sh
+JULIUS_CACHE_APPS=my-agent julius proxy serve      # comma-separated tags, or "*" for all apps
+```
+
+The mutation is a single top-level `cache_control: {type: ephemeral}` field on Anthropic `/v1/messages` requests — Anthropic's auto-caching form, where the server itself places the breakpoint. Requests that already use `cache_control` anywhere are never touched (the app is managing its own caching), other providers and endpoints pass through, and anything that doesn't parse as JSON is forwarded verbatim. Nothing is estimated: the effect shows up as provider-reported cache read/write tokens in the exact metering. Note the tradeoff caching itself carries — cache writes bill at 1.25×, reads at ~0.1×, so it pays off from the second request on a stable prefix (which is exactly what agent loops resend).
+
 ## More commands
 
 ```sh
@@ -103,7 +113,7 @@ Drop project-specific filters in `.julius/filters.toml` — same declarative for
 ## Scope, honestly
 
 - Savings on command output depend on the command: verbose output (tests, installs, builds) compresses 90%+; already-terse output has little to save, and julius won't pretend otherwise.
-- The proxy meters exactly, and — opt-in per app — compresses resent tool results in the request path. Those compression savings are estimates and are reported separately from the exact usage numbers. Cache-hint injection is next on the roadmap.
+- The proxy meters exactly, and — opt-in per app — compresses resent tool results and injects Anthropic prompt-cache hints in the request path. Compression savings are estimates and reported separately; cache effects are provider-reported and appear in the exact usage numbers.
 - v1 integrates with Claude Code. More agents are planned.
 
 ## License
