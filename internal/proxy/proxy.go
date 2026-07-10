@@ -2,8 +2,9 @@
 // proxy for LLM provider traffic that records exact, provider-reported
 // token usage. By default it never mutates payloads — requests and
 // responses are forwarded verbatim, streaming included. Apps that opt in
-// (see Compressor) additionally get tool-result content in their request
-// bodies compressed before it reaches the provider.
+// additionally get tool-result content compressed (see Compressor) and
+// Anthropic prompt-cache hints injected (see CacheHinter) before the
+// request reaches the provider.
 //
 // Apps opt in with zero code changes:
 //
@@ -36,6 +37,7 @@ type Recorder func(appTag string, u Usage)
 type Server struct {
 	record    Recorder
 	compress  *Compressor
+	hints     *CacheHinter
 	client    *http.Client
 	upstreams map[string]string
 }
@@ -80,7 +82,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawQuery != "" {
 		url += "?" + r.URL.RawQuery
 	}
-	body, length := s.requestBody(r, provider, appTag)
+	body, length := s.requestBody(r, provider, rest, appTag)
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, url, body)
 	if err != nil {
 		http.Error(w, "julius proxy: "+err.Error(), http.StatusBadGateway)
@@ -116,19 +118,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // nil leaves the proxy fully pass-through.
 func (s *Server) EnableCompression(c *Compressor) { s.compress = c }
 
+// EnableCacheHints turns on opt-in cache-hint injection (see CacheHinter);
+// nil leaves request bodies untouched.
+func (s *Server) EnableCacheHints(h *CacheHinter) { s.hints = h }
+
 // requestBody returns the body to forward upstream and its length (-1 for
-// unknown). For apps opted into compression, POST bodies are buffered,
-// rewritten when they shrink, and re-measured; everything else streams
+// unknown). For apps opted into compression or cache hints, POST bodies
+// are buffered, rewritten, and re-measured; everything else streams
 // through untouched. A body too large to buffer is forwarded unmodified.
-func (s *Server) requestBody(r *http.Request, provider, appTag string) (io.Reader, int64) {
-	if !s.compress.enabled(appTag) || r.Method != http.MethodPost {
+func (s *Server) requestBody(r *http.Request, provider, rest, appTag string) (io.Reader, int64) {
+	compress, hint := s.compress.enabled(appTag), s.hints.enabled(appTag)
+	if (!compress && !hint) || r.Method != http.MethodPost {
 		return r.Body, r.ContentLength
 	}
 	data, err := io.ReadAll(io.LimitReader(r.Body, maxBufferedBody+1))
 	if err != nil || len(data) > maxBufferedBody {
 		return io.MultiReader(bytes.NewReader(data), r.Body), r.ContentLength
 	}
-	out, _ := s.compress.Request(provider, appTag, data)
+	out := data
+	if compress {
+		out, _ = s.compress.Request(provider, appTag, out)
+	}
+	if hint {
+		out, _ = s.hints.Request(provider, rest, out)
+	}
 	return bytes.NewReader(out), int64(len(out))
 }
 
@@ -178,10 +191,11 @@ func (s *Server) relayBuffered(w http.ResponseWriter, body io.Reader, provider, 
 }
 
 // Serve runs the proxy on the given port until the listener fails.
-// compress may be nil (metering only).
-func Serve(port int, record Recorder, compress *Compressor) error {
+// compress and hints may be nil (metering only).
+func Serve(port int, record Recorder, compress *Compressor, hints *CacheHinter) error {
 	handler := New(record)
 	handler.EnableCompression(compress)
+	handler.EnableCacheHints(hints)
 	srv := &http.Server{
 		Addr:              fmt.Sprintf("127.0.0.1:%d", port),
 		Handler:           handler,
@@ -193,6 +207,9 @@ func Serve(port int, record Recorder, compress *Compressor) error {
 	fmt.Printf("  export OPENAI_BASE_URL=http://127.0.0.1:%d/openai/v1\n\n", port)
 	if compress != nil {
 		fmt.Printf("tool-result compression: on for %s (JULIUS_COMPRESS_APPS)\n", compress.Scope())
+	}
+	if hints != nil {
+		fmt.Printf("prompt-cache hints (anthropic): on for %s (JULIUS_CACHE_APPS)\n", hints.Scope())
 	}
 	fmt.Printf("tag traffic per app with the %s header; view usage with `julius savings`\n", appTagHeader)
 	return srv.ListenAndServe()

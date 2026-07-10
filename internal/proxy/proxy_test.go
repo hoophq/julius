@@ -278,3 +278,54 @@ func TestProxyCompressionOptInPerApp(t *testing.T) {
 		t.Errorf("non-opted-in body was modified (len %d vs %d)", length, len(sent))
 	}
 }
+
+func TestProxyCacheHintsOptInPerApp(t *testing.T) {
+	var mu sync.Mutex
+	var gotBody []byte
+	var gotLen int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		gotBody, gotLen = body, r.ContentLength
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"model":"m","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer upstream.Close()
+
+	srv := New(nil)
+	srv.upstreams["anthropic"] = upstream.URL
+	srv.EnableCacheHints(NewCacheHinter([]string{"agent"}))
+	front := httptest.NewServer(srv)
+	defer front.Close()
+
+	sent := hintBody(t)
+
+	send := func(appTag string) ([]byte, int64) {
+		req, _ := http.NewRequest("POST", front.URL+"/anthropic/v1/messages", strings.NewReader(sent))
+		req.Header.Set(appTagHeader, appTag)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		return gotBody, gotLen
+	}
+
+	// opted-in app: hint present, Content-Length matches the rewrite
+	body, length := send("agent")
+	if !strings.Contains(string(body), `"cache_control":{"type":"ephemeral"}`) {
+		t.Errorf("opted-in body missing cache hint: %.200s", body)
+	}
+	if length != int64(len(body)) {
+		t.Errorf("Content-Length = %d, body = %d bytes", length, len(body))
+	}
+
+	// any other app: byte-for-byte pass-through
+	body, length = send("other")
+	if string(body) != sent || length != int64(len(sent)) {
+		t.Errorf("non-opted-in body was modified (len %d vs %d)", length, len(sent))
+	}
+}
