@@ -1,7 +1,9 @@
 // Package proxy is the app/API interception surface: a local pass-through
 // proxy for LLM provider traffic that records exact, provider-reported
-// token usage. It never mutates payloads — requests and responses are
-// forwarded verbatim, streaming included.
+// token usage. By default it never mutates payloads — requests and
+// responses are forwarded verbatim, streaming included. Apps that opt in
+// (see Compressor) additionally get tool-result content in their request
+// bodies compressed before it reaches the provider.
 //
 // Apps opt in with zero code changes:
 //
@@ -10,6 +12,7 @@
 package proxy
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,6 +35,7 @@ type Recorder func(appTag string, u Usage)
 // Server proxies provider traffic and meters it.
 type Server struct {
 	record    Recorder
+	compress  *Compressor
 	client    *http.Client
 	upstreams map[string]string
 }
@@ -76,7 +80,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawQuery != "" {
 		url += "?" + r.URL.RawQuery
 	}
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, url, r.Body)
+	body, length := s.requestBody(r, provider, appTag)
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, url, body)
 	if err != nil {
 		http.Error(w, "julius proxy: "+err.Error(), http.StatusBadGateway)
 		return
@@ -84,8 +89,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Preserve the declared body length: without it Go falls back to
 	// chunked transfer encoding, which some upstreams and middleboxes
 	// mishandle (a Content-Length reader sees an empty body).
-	if r.ContentLength >= 0 {
-		req.ContentLength = r.ContentLength
+	if length >= 0 {
+		req.ContentLength = length
 	}
 	copyHeaders(req.Header, r.Header)
 	req.Header.Del(appTagHeader)
@@ -105,6 +110,26 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.relayBuffered(w, resp.Body, provider, appTag, resp.StatusCode)
+}
+
+// EnableCompression turns on opt-in request compression (see Compressor);
+// nil leaves the proxy fully pass-through.
+func (s *Server) EnableCompression(c *Compressor) { s.compress = c }
+
+// requestBody returns the body to forward upstream and its length (-1 for
+// unknown). For apps opted into compression, POST bodies are buffered,
+// rewritten when they shrink, and re-measured; everything else streams
+// through untouched. A body too large to buffer is forwarded unmodified.
+func (s *Server) requestBody(r *http.Request, provider, appTag string) (io.Reader, int64) {
+	if !s.compress.enabled(appTag) || r.Method != http.MethodPost {
+		return r.Body, r.ContentLength
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, maxBufferedBody+1))
+	if err != nil || len(data) > maxBufferedBody {
+		return io.MultiReader(bytes.NewReader(data), r.Body), r.ContentLength
+	}
+	out, _ := s.compress.Request(provider, appTag, data)
+	return bytes.NewReader(out), int64(len(out))
 }
 
 // relayStream forwards SSE bytes verbatim, flushing per chunk so streaming
@@ -153,16 +178,22 @@ func (s *Server) relayBuffered(w http.ResponseWriter, body io.Reader, provider, 
 }
 
 // Serve runs the proxy on the given port until the listener fails.
-func Serve(port int, record Recorder) error {
+// compress may be nil (metering only).
+func Serve(port int, record Recorder, compress *Compressor) error {
+	handler := New(record)
+	handler.EnableCompression(compress)
 	srv := &http.Server{
 		Addr:              fmt.Sprintf("127.0.0.1:%d", port),
-		Handler:           New(record),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	fmt.Printf("julius proxy listening on http://127.0.0.1:%d\n\n", port)
 	fmt.Printf("point your apps at it (no code changes):\n")
 	fmt.Printf("  export ANTHROPIC_BASE_URL=http://127.0.0.1:%d/anthropic\n", port)
 	fmt.Printf("  export OPENAI_BASE_URL=http://127.0.0.1:%d/openai/v1\n\n", port)
+	if compress != nil {
+		fmt.Printf("tool-result compression: on for %s (JULIUS_COMPRESS_APPS)\n", compress.Scope())
+	}
 	fmt.Printf("tag traffic per app with the %s header; view usage with `julius savings`\n", appTagHeader)
 	return srv.ListenAndServe()
 }

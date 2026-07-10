@@ -11,7 +11,7 @@ julius sits between the noise and the model:
 
 - **Command-output compression** — dev commands (git, test runners, linters, docker, package managers) return a compressed, high-signal version of their output. **Typically 60–90% savings on supported commands**, measured, with the full raw output always recoverable from disk.
 - **Native tool interception** — file re-reads collapse to a marker when nothing changed (or a diff when something did), repeated command outputs dedupe, search results get bounded. This works on your agent's built-in tools, not just shell commands.
-- **API usage metering** — point any script at the julius local proxy (`ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL`) and get exact, provider-reported token usage per app and model. No code changes, no TLS tricks, payloads forwarded byte-for-byte.
+- **API usage metering** — point any script at the julius local proxy (`ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL`) and get exact, provider-reported token usage per app and model. No code changes, no TLS tricks, payloads forwarded byte-for-byte — unless an app opts into tool-result compression (below).
 
 ## Install
 
@@ -76,7 +76,17 @@ export OPENAI_BASE_URL=http://127.0.0.1:4141/openai/v1
 python my_pipeline.py              # unchanged
 ```
 
-Every call is forwarded verbatim — streaming included — and the provider-reported usage lands in `julius savings`, broken down per app (`X-Julius-App` header) and model. Today the proxy meters; request-path compression is on the roadmap.
+Every call is forwarded verbatim — streaming included — and the provider-reported usage lands in `julius savings`, broken down per app (`X-Julius-App` header) and model.
+
+### Tool-result compression (opt-in)
+
+Agents resend their accumulated tool results with every request. Opt an app in and the proxy runs the same filter engine over that resent content before it reaches the provider:
+
+```sh
+JULIUS_COMPRESS_APPS=my-agent julius proxy serve   # comma-separated tags, or "*" for all apps
+```
+
+Only tool results are touched — Anthropic `tool_result` blocks and OpenAI `role:"tool"` messages. System prompts, user text, tool-call arguments, error results, and image/document blocks always pass through untouched, and any body that doesn't parse as JSON is forwarded verbatim. The savings are estimates and get their own section in `julius savings`, never mixed into the exact metering numbers.
 
 ## More commands
 
@@ -93,7 +103,7 @@ Drop project-specific filters in `.julius/filters.toml` — same declarative for
 ## Scope, honestly
 
 - Savings on command output depend on the command: verbose output (tests, installs, builds) compresses 90%+; already-terse output has little to save, and julius won't pretend otherwise.
-- The proxy meters exactly; it does not (yet) reduce API-side token usage. That work — request-path compression of resent tool results, cache-hint injection — is next on the roadmap, and it will be opt-in.
+- The proxy meters exactly, and — opt-in per app — compresses resent tool results in the request path. Those compression savings are estimates and are reported separately from the exact usage numbers. Cache-hint injection is next on the roadmap.
 - v1 integrates with Claude Code. More agents are planned.
 
 ## License

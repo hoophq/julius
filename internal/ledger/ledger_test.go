@@ -95,3 +95,43 @@ func TestConcurrentWriters(t *testing.T) {
 		t.Errorf("concurrent writes recorded %d events, want 10", tot.Events)
 	}
 }
+
+func TestProxySavings(t *testing.T) {
+	l := openTemp(t)
+	base := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
+	rows := []ProxySaving{
+		{TS: base, AppTag: "agent", Provider: "anthropic", TokensBefore: 900, TokensAfter: 200},
+		{TS: base.Add(time.Minute), AppTag: "agent", Provider: "openai", TokensBefore: 400, TokensAfter: 100},
+	}
+	for _, p := range rows {
+		if err := l.RecordProxySaving(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tot, err := l.ProxySavingsTotals(base.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tot.Events != 2 || tot.TokensBefore != 1300 || tot.TokensAfter != 300 || tot.Saved() != 1000 {
+		t.Errorf("totals = %+v", tot)
+	}
+
+	// since-filter excludes older rows
+	tot, err = l.ProxySavingsTotals(base.Add(30 * time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tot.Events != 1 {
+		t.Errorf("since filter: events = %d, want 1", tot.Events)
+	}
+
+	// proxy savings never leak into the hook surface
+	hook, err := l.HookTotals(base.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hook.Events != 0 {
+		t.Errorf("hook surface contaminated: %+v", hook)
+	}
+}

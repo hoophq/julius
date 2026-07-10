@@ -1,9 +1,10 @@
 // Package ledger persists savings and usage records.
 //
-// Two tables, two truths — kept separate on purpose and never blended:
+// Three tables, three truths — kept separate on purpose and never blended:
 //
-//	hook_events — command-surface savings, token counts are ESTIMATES
-//	api_calls   — proxy-surface usage, token counts are provider-reported
+//	hook_events   — command-surface savings, token counts are ESTIMATES
+//	api_calls     — proxy-surface usage, token counts are provider-reported
+//	proxy_savings — proxy request compression, token counts are ESTIMATES
 //
 // Writes come from short-lived concurrent processes (hooks, wrappers), so
 // the database runs in WAL mode with a short busy timeout. Recording is
@@ -73,6 +74,15 @@ CREATE TABLE IF NOT EXISTS api_calls (
   cache_write_tokens INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS api_calls_ts ON api_calls(ts);
+CREATE TABLE IF NOT EXISTS proxy_savings (
+  id INTEGER PRIMARY KEY,
+  ts TEXT NOT NULL,
+  app_tag TEXT NOT NULL DEFAULT '',
+  provider TEXT NOT NULL,
+  tokens_before INTEGER NOT NULL,
+  tokens_after INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS proxy_savings_ts ON proxy_savings(ts);
 `
 
 // Open opens (creating if needed) the ledger at path.
@@ -188,7 +198,42 @@ func (l *Ledger) APIUsageByApp(since time.Time, limit int) ([]AppUsage, error) {
 	return out, rows.Err()
 }
 
-// Totals summarizes the hook surface since the given time.
+// ProxySaving is one request-compression record: estimated tokens shaved
+// off a request body before it reached the provider. Estimates — reported
+// separately from the exact api_calls numbers, always.
+type ProxySaving struct {
+	TS           time.Time
+	AppTag       string
+	Provider     string
+	TokensBefore int
+	TokensAfter  int
+}
+
+// RecordProxySaving inserts one request-compression record.
+func (l *Ledger) RecordProxySaving(p ProxySaving) error {
+	if p.TS.IsZero() {
+		p.TS = time.Now()
+	}
+	_, err := l.db.Exec(
+		`INSERT INTO proxy_savings (ts, app_tag, provider, tokens_before, tokens_after)
+		 VALUES (?, ?, ?, ?, ?)`,
+		p.TS.UTC().Format(time.RFC3339), p.AppTag, p.Provider, p.TokensBefore, p.TokensAfter,
+	)
+	return err
+}
+
+// ProxySavingsTotals aggregates proxy_savings since a point in time.
+func (l *Ledger) ProxySavingsTotals(since time.Time) (Totals, error) {
+	var t Totals
+	err := l.db.QueryRow(
+		`SELECT COUNT(*), COALESCE(SUM(tokens_before),0), COALESCE(SUM(tokens_after),0)
+		 FROM proxy_savings WHERE ts >= ?`,
+		since.UTC().Format(time.RFC3339),
+	).Scan(&t.Events, &t.TokensBefore, &t.TokensAfter)
+	return t, err
+}
+
+// Totals is an aggregate over an estimate-based savings table.
 type Totals struct {
 	Events       int
 	TokensBefore int

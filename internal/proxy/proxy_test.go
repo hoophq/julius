@@ -226,3 +226,55 @@ func TestProxyErrorNotMetered(t *testing.T) {
 		t.Errorf("error responses must not be metered, got n=%d", rec.n)
 	}
 }
+
+func TestProxyCompressionOptInPerApp(t *testing.T) {
+	var mu sync.Mutex
+	var gotBody []byte
+	var gotLen int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		gotBody, gotLen = body, r.ContentLength
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"model":"m","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer upstream.Close()
+
+	srv := New(nil)
+	srv.upstreams["anthropic"] = upstream.URL
+	srv.EnableCompression(testCompressor(t, nil))
+	front := httptest.NewServer(srv)
+	defer front.Close()
+
+	noisy := repetitive(40)
+	sent := fmt.Sprintf(`{"model":"m","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":%q}]}]}`, noisy)
+
+	send := func(appTag string) ([]byte, int64) {
+		req, _ := http.NewRequest("POST", front.URL+"/anthropic/v1/messages", strings.NewReader(sent))
+		req.Header.Set(appTagHeader, appTag)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		return gotBody, gotLen
+	}
+
+	// opted-in app: body shrinks, Content-Length matches the rewrite
+	body, length := send("agent")
+	if !strings.Contains(string(body), "[julius: repeated 40×]") || len(body) >= len(sent) {
+		t.Errorf("opted-in body not compressed (%d bytes)", len(body))
+	}
+	if length != int64(len(body)) {
+		t.Errorf("Content-Length = %d, body = %d bytes", length, len(body))
+	}
+
+	// any other app: byte-for-byte pass-through
+	body, length = send("other")
+	if string(body) != sent || length != int64(len(sent)) {
+		t.Errorf("non-opted-in body was modified (len %d vs %d)", length, len(sent))
+	}
+}

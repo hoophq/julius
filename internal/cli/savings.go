@@ -33,6 +33,7 @@ func newSavingsCmd() *cobra.Command {
 				fmt.Println("  no filtered commands recorded yet")
 				fmt.Printf("\n  %s\n", ui.Dim("run `julius init` to install the Claude Code hooks, or prefix commands manually: julius git status"))
 				renderAPIUsage(l, since, days)
+				renderProxySavings(l, since, days)
 				return nil
 			}
 
@@ -67,11 +68,33 @@ func newSavingsCmd() *cobra.Command {
 				}
 			}
 			renderAPIUsage(l, since, days)
+			renderProxySavings(l, since, days)
 			return nil
 		},
 	}
 	cmd.Flags().IntVar(&days, "days", 30, "look-back window in days")
 	return cmd
+}
+
+// renderProxySavings prints request-compression savings. Estimates on the
+// proxy surface — a third category, never folded into the command-surface
+// numbers or the exact API usage above. Silent until compression has
+// recorded something: the feature is opt-in.
+func renderProxySavings(l *ledger.Ledger, since time.Time, days int) {
+	tot, err := l.ProxySavingsTotals(since)
+	if err != nil || tot.Events == 0 {
+		return
+	}
+	pct := 0.0
+	if tot.TokensBefore > 0 {
+		pct = float64(tot.Saved()) / float64(tot.TokensBefore) * 100
+	}
+	fmt.Printf("\n%s %s\n\n", ui.Title("Proxy compression"), ui.Dim(fmt.Sprintf("· estimates · last %dd", days)))
+	fmt.Printf("  requests   %s   tokens %s %s %s\n",
+		ui.Bold(fmt.Sprintf("%d", tot.Events)),
+		fmtTokens(tot.TokensBefore), ui.Dim("→"), fmtTokens(tot.TokensAfter))
+	fmt.Printf("  saved      %s %s  %s\n",
+		ui.Good(fmtTokens(tot.Saved())), ui.Pct(pct), ui.Meter(pct, 24))
 }
 
 // renderAPIUsage prints the proxy surface. The two surfaces are reported
