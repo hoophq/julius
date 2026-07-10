@@ -2,9 +2,14 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"time"
 
+	"github.com/hoophq/julius/internal/filter"
 	"github.com/hoophq/julius/internal/install"
+	"github.com/hoophq/julius/internal/scan"
+	"github.com/hoophq/julius/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -35,6 +40,24 @@ func newInitCmd() *cobra.Command {
 	return cmd
 }
 
+// coverageHint warns when the install is healthy but most routable
+// commands still bypass the hook — the realized-savings leak doctor's
+// pass/fail checks can't see. Informational only: small samples and scan
+// errors stay silent, and the hint never affects the exit code.
+func coverageHint(cwd string) {
+	rep, err := scan.Dir(scan.TranscriptDir(cwd), time.Now().AddDate(0, 0, -7), filter.Load(cwd))
+	if err != nil {
+		return
+	}
+	pct, wrapped, routable := rep.Coverage()
+	if routable < 10 || pct >= 60 {
+		return
+	}
+	fmt.Printf("\n%s  hook coverage last 7d: %s %s\n", ui.Warn("NOTE"), ui.Pct(pct),
+		ui.Dim(fmt.Sprintf("(%d of %d routable commands went through julius)", wrapped, routable)))
+	fmt.Printf("      run %s to see what's leaking\n", ui.Bold("julius scan"))
+}
+
 func newDoctorCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
@@ -42,7 +65,9 @@ func newDoctorCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
-			if ok := install.Render(install.Doctor(cwd), os.Stdout); !ok {
+			ok := install.Render(install.Doctor(cwd), os.Stdout)
+			coverageHint(cwd)
+			if !ok {
 				return exitCodeError(1)
 			}
 			return nil
