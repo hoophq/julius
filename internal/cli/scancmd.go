@@ -38,6 +38,15 @@ func newScanCmd() *cobra.Command {
 				ui.Dim(fmt.Sprintf("· %d sessions · last %dd · %d bash commands, %d already wrapped",
 					rep.Sessions, days, rep.BashCommands, rep.Wrapped)))
 
+			if pct, wrapped, routable := rep.Coverage(); routable > 0 {
+				fmt.Printf("\n  coverage   %s %s  %s\n",
+					ui.Pct(pct), ui.Dim(fmt.Sprintf("(%d of %d routable commands went through julius)", wrapped, routable)),
+					ui.Meter(pct, 24))
+				if pct < 60 {
+					fmt.Printf("  %s\n", ui.Dim("→ routable commands are bypassing julius; the misses below are the leak"))
+				}
+			}
+
 			if len(rep.Missed) == 0 && len(rep.Candidates) == 0 {
 				fmt.Printf("\n  %s\n", ui.Good("nothing missed — julius covered everything it could"))
 				return nil

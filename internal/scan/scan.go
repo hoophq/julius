@@ -39,6 +39,26 @@ type Missed struct {
 // Saved returns the tokens this command left on the table.
 func (m Missed) Saved() int { return m.TokensBefore - m.TokensAfter }
 
+// Coverage reports how much of the routable traffic actually went through
+// julius: of the commands julius has a filter for, the fraction that ran
+// wrapped. Candidates (no filter exists) are excluded — julius could not
+// have helped them, so they don't belong in the denominator. This is the
+// north-star for *realized* savings: a perfect filter on a command that
+// bypasses the hook saves nothing.
+//
+// Returns the percentage plus the wrapped count and the routable total.
+func (r Report) Coverage() (pct float64, wrapped, routable int) {
+	wrapped = r.Wrapped
+	routable = r.Wrapped
+	for _, m := range r.Missed {
+		routable += m.Runs
+	}
+	if routable == 0 {
+		return 0, wrapped, routable
+	}
+	return float64(wrapped) / float64(routable) * 100, wrapped, routable
+}
+
 // Candidate is an unsupported command family ranked by output volume —
 // the data-driven queue for new filters.
 type Candidate struct {
