@@ -34,6 +34,14 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/hoophq/julius
     description: Cut LLM token usage on command output and API traffic
+    hooks:
+      post:
+        # The release binary is not notarized; without this, Gatekeeper
+        # SIGKILLs the quarantined binary on launch.
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/julius"]
+          end
 
 changelog:
   sort: asc
