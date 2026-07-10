@@ -82,6 +82,33 @@ func buildCorpus() []corpusCase {
 		fmt.Fprintf(&dbuild, "#%d [%d/30] RUN step-%d\n#%d DONE %d.%ds\n", i, i, i, i, i%9, i%10)
 	}
 
+	var grep strings.Builder
+	for i := 0; i < 300; i++ {
+		fmt.Fprintf(&grep, "internal/pkg%02d/file%02d.go:%d:\tif err := doThing%d(ctx); err != nil {\n", i%20, i%7, i*3+1, i)
+	}
+
+	var curl strings.Builder
+	curl.WriteString("<!DOCTYPE html>\n<html lang=\"en\">\n<head><title>Docs</title></head>\n<body>\n")
+	for i := 0; i < 600; i++ {
+		fmt.Fprintf(&curl, "<p class=\"doc-line\">Documentation paragraph %d with some explanatory prose in it.</p>\n", i)
+	}
+	curl.WriteString("</body>\n</html>\n")
+
+	var ghlog strings.Builder
+	for i := 0; i < 400; i++ {
+		fmt.Fprintf(&ghlog, "test (ubuntu-latest)\tRun go test ./...\t2026-07-10T21:13:%02d.%07dZ ok  \tgithub.com/x/pkg%03d\t0.%02ds\n", i%60, i*13%9999999, i, i%99)
+	}
+
+	var sed strings.Builder
+	for i := 0; i < 300; i++ {
+		fmt.Fprintf(&sed, "line %03d of the printed file with enough width to look like source code\n", i)
+	}
+
+	var ls strings.Builder
+	for i := 0; i < 250; i++ {
+		fmt.Fprintf(&ls, "-rw-r--r--   1 dev  staff  %5d Jul 10 12:%02d file_%03d.go\n", i*137, i%60, i)
+	}
+
 	return []corpusCase{
 		{"go test ./...", goTest.String(), 85},
 		{"pytest", pytest.String(), 75},
@@ -93,6 +120,11 @@ func buildCorpus() []corpusCase {
 		{"terraform plan", tfplan.String(), 75},
 		{"pip3 install -r requirements.txt", pip.String(), 85},
 		{"docker build -t app .", dbuild.String(), 90},
+		{"grep -rn 'err !=' internal/", grep.String(), 55},
+		{"curl -s https://example.com/docs", curl.String(), 50},
+		{"gh run view 29123153293 --log", ghlog.String(), 55},
+		{"sed -n '1,400p' main.go", sed.String(), 55},
+		{"ls -la internal/", ls.String(), 50},
 	}
 }
 
