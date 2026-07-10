@@ -182,11 +182,7 @@ func classify(cmd, stdout string, reg *filter.Registry, rep *Report, missed map[
 	rep.BashCommands++
 
 	for _, p := range router.SplitChain(cmd) {
-		seg := p.Text
-		if seg == "" {
-			continue
-		}
-		if seg == "julius" || strings.HasPrefix(seg, "julius ") {
+		if p.Text != "" && router.IsWrapped(p.Text) {
 			rep.Wrapped++
 			return
 		}
@@ -198,12 +194,11 @@ func classify(cmd, stdout string, reg *filter.Registry, rep *Report, missed map[
 		return
 	}
 
-	// Match exactly as the router rewrites: strip any leading env-assignment
-	// prefix so `CGO_ENABLED=0 go build` is recognized as routable, and check
-	// each chain segment.
+	// Match exactly as the router rewrites: env prefixes, sudo, and path
+	// invocations reduce to the same target the hook would route, checked
+	// per chain segment.
 	pick := func(c string) filter.Filter {
-		_, core := router.SplitEnvPrefix(c)
-		return reg.Pick(core)
+		return reg.Pick(router.MatchTarget(c))
 	}
 	f := pick(cmd)
 	if f == nil {
@@ -243,8 +238,7 @@ func classify(cmd, stdout string, reg *filter.Registry, rep *Report, missed map[
 // family reduces a command line to a rankable family name, e.g.
 // "kubectl get pods -A" → "kubectl get".
 func family(cmd string) string {
-	_, cmd = router.SplitEnvPrefix(cmd)
-	fields := strings.Fields(cmd)
+	fields := strings.Fields(router.MatchTarget(cmd))
 	if len(fields) == 0 {
 		return "(empty)"
 	}

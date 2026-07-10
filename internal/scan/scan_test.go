@@ -81,6 +81,39 @@ func TestScanTranscript(t *testing.T) {
 	}
 }
 
+func TestScanBypassForms(t *testing.T) {
+	dir := t.TempDir()
+	lines := []string{
+		// the julius binary invoked by path or under sudo counts as wrapped
+		useLine("t1", "./julius go test ./..."),
+		resultLine("t1", "ok"),
+		useLine("t2", "sudo julius git status"),
+		resultLine("t2", "On branch main"),
+		// sudo'd and path-invoked routable commands are misses, not candidates
+		useLine("t3", "sudo -E go test -v ./..."),
+		resultLine("t3", verboseGoTest()),
+		useLine("t4", "/usr/local/go/bin/go test -v ./..."),
+		resultLine("t4", verboseGoTest()),
+	}
+	if err := os.WriteFile(filepath.Join(dir, "s1.jsonl"), []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Dir(dir, time.Now().Add(-time.Hour), filter.Load(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Wrapped != 2 {
+		t.Errorf("wrapped = %d, want 2 (path- and sudo-invoked julius): %+v", rep.Wrapped, rep)
+	}
+	if len(rep.Missed) != 1 || rep.Missed[0].Command != "go-test" || rep.Missed[0].Runs != 2 {
+		t.Errorf("sudo/path go test must classify as go-test misses: %+v", rep.Missed)
+	}
+	if len(rep.Candidates) != 0 {
+		t.Errorf("no candidates expected: %+v", rep.Candidates)
+	}
+}
+
 func TestScanWindowFilter(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "old.jsonl")
