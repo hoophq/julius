@@ -9,6 +9,7 @@ import (
 	"github.com/hoophq/julius/internal/execx"
 	"github.com/hoophq/julius/internal/filter"
 	"github.com/hoophq/julius/internal/ledger"
+	"github.com/hoophq/julius/internal/router"
 	"github.com/hoophq/julius/internal/tokens"
 )
 
@@ -18,7 +19,10 @@ func wrap(argv []string) int {
 	cwd, _ := os.Getwd()
 	reg := filter.Load(cwd)
 	cmdline := strings.Join(argv, " ")
-	f := reg.Pick(cmdline)
+	// Match on the canonical form (`sudo /usr/bin/git status` → `git
+	// status`) so filter selection agrees with what the router routed;
+	// execution below uses argv untouched.
+	f := reg.Pick(router.MatchTarget(cmdline))
 
 	outc, err := execx.Run(argv)
 	if err != nil {

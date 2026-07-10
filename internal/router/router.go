@@ -98,6 +98,67 @@ func SplitChain(cmd string) []Part {
 	return parts
 }
 
+// MatchTarget reduces one chain segment to the command that filter and
+// routability matching should see: leading env assignments are dropped, a
+// leading sudo invocation is peeled off, and an executable referenced by
+// path is reduced to its basename — `sudo -E /usr/bin/git status` matches
+// like `git status`. Execution always uses the original text; only
+// matching uses the reduced form. Segments it can't reduce safely are
+// returned unchanged.
+func MatchTarget(text string) string {
+	_, rest := SplitEnvPrefix(strings.TrimSpace(text))
+	rest = stripSudo(rest)
+	tok, args := firstToken(rest)
+	// Quoted paths can contain spaces firstToken can't see through; leave
+	// them alone rather than match the wrong program.
+	if strings.HasPrefix(tok, `"`) || strings.HasPrefix(tok, `'`) {
+		return rest
+	}
+	if i := strings.LastIndex(tok, "/"); i >= 0 && i+1 < len(tok) {
+		tok = tok[i+1:]
+	}
+	if args == "" {
+		return tok
+	}
+	return tok + " " + args
+}
+
+// stripSudo removes a leading sudo invocation when doing so is safe for
+// matching: bare sudo, passthrough flags (-E, -H, -n, -k, --preserve-env),
+// a target user/group (-u NAME, -g NAME), and env assignments sudo passes
+// to the command. Shell-invoking forms (-i, -s) and unrecognized flags
+// leave the segment unreduced — better to miss a rewrite than to match
+// the wrong command.
+func stripSudo(s string) string {
+	tok, rest := firstToken(s)
+	if tok != "sudo" {
+		return s
+	}
+	for {
+		tok, r := firstToken(rest)
+		switch {
+		case tok == "-E" || tok == "-H" || tok == "-n" || tok == "-k" || tok == "--preserve-env":
+			rest = r
+		case tok == "-u" || tok == "-g":
+			_, rest = firstToken(r)
+		case strings.HasPrefix(tok, "-"):
+			return s
+		default:
+			_, cmd := SplitEnvPrefix(rest)
+			return cmd
+		}
+	}
+}
+
+// firstToken splits off the first whitespace-delimited token.
+func firstToken(s string) (tok, rest string) {
+	s = strings.TrimLeft(s, " \t")
+	if i := strings.IndexAny(s, " \t"); i >= 0 {
+		return s[:i], strings.TrimLeft(s[i:], " \t")
+	}
+	return s, ""
+}
+
 // Matcher reports whether a filter exists for the given command line.
 type Matcher func(cmd string) bool
 
@@ -112,7 +173,8 @@ func Route(cmd string, routable Matcher) (string, bool) {
 		text := p.Text
 		if text != "" {
 			env, core := SplitEnvPrefix(text)
-			if !isWrapped(core) && routable(core) {
+			target := MatchTarget(core)
+			if !isWrapped(target) && routable(target) {
 				text = env + "julius " + core
 				changed = true
 			}
@@ -123,6 +185,12 @@ func Route(cmd string, routable Matcher) (string, bool) {
 		}
 	}
 	return b.String(), changed
+}
+
+// IsWrapped reports whether the segment already runs through julius, in
+// any spelling MatchTarget understands (julius, ./julius, sudo julius).
+func IsWrapped(text string) bool {
+	return isWrapped(MatchTarget(text))
 }
 
 func isWrapped(text string) bool {

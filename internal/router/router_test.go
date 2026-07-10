@@ -69,11 +69,68 @@ func TestRoute(t *testing.T) {
 		{"FOO=bar julius go test", "FOO=bar julius go test", false},
 		// env prefix on one segment of a chain
 		{"CGO_ENABLED=0 go test ./... && ls", "CGO_ENABLED=0 julius go test ./... && ls", true},
+		// sudo: julius wraps the whole sudo invocation, running as the user
+		{"sudo git status", "julius sudo git status", true},
+		{"sudo -E git status", "julius sudo -E git status", true},
+		{"sudo -u deploy git status", "julius sudo -u deploy git status", true},
+		{"FOO=bar sudo git status", "FOO=bar julius sudo git status", true},
+		// shell-invoking sudo forms are left alone
+		{"sudo -i git status", "sudo -i git status", false},
+		// path-invoked executables match by basename, run by original path
+		{"/usr/bin/git status", "julius /usr/bin/git status", true},
+		{"./scripts/git status", "julius ./scripts/git status", true},
+		// already wrapped in path or sudo spelling → idempotent
+		{"./julius git status", "./julius git status", false},
+		{"/usr/local/bin/julius git status", "/usr/local/bin/julius git status", false},
+		{"sudo julius git status", "sudo julius git status", false},
 	}
 	for _, c := range cases {
 		got, changed := Route(c.in, gitOrGoTest)
 		if got != c.want || changed != c.wantChanged {
 			t.Errorf("Route(%q) = (%q, %v), want (%q, %v)", c.in, got, changed, c.want, c.wantChanged)
+		}
+	}
+}
+
+func TestMatchTarget(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"git status", "git status"},
+		{"CGO_ENABLED=0 go test ./...", "go test ./..."},
+		{"sudo docker ps", "docker ps"},
+		{"sudo -E -n kubectl get pods", "kubectl get pods"},
+		{"sudo -u root -H docker ps", "docker ps"},
+		{"sudo FOO=bar go test", "go test"},
+		{"sudo -E /usr/bin/git status", "git status"},
+		{"/opt/homebrew/bin/gh pr list", "gh pr list"},
+		{"./julius scan", "julius scan"},
+		{"node_modules/.bin/jest --ci", "jest --ci"},
+		// unreducible forms come back unchanged (minus env prefix)
+		{"sudo -i git status", "sudo -i git status"},
+		{"sudo --badflag git status", "sudo --badflag git status"},
+		{`"/my dir/git" status`, `"/my dir/git" status`},
+		// degenerate inputs must not panic
+		{"sudo", ""},
+		{"", ""},
+		{"/", "/"},
+	}
+	for _, c := range cases {
+		if got := MatchTarget(c.in); got != c.want {
+			t.Errorf("MatchTarget(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestIsWrapped(t *testing.T) {
+	wrapped := []string{"julius git status", "julius", "./julius scan", "/usr/local/bin/julius go test", "sudo julius docker ps", "FOO=bar julius go test"}
+	for _, s := range wrapped {
+		if !IsWrapped(s) {
+			t.Errorf("IsWrapped(%q) = false, want true", s)
+		}
+	}
+	unwrapped := []string{"git status", "juliusish tool", "echo julius git status | cat"}
+	for _, s := range unwrapped {
+		if IsWrapped(s) {
+			t.Errorf("IsWrapped(%q) = true, want false", s)
 		}
 	}
 }
