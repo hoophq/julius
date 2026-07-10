@@ -15,11 +15,13 @@ package ledger
 
 import (
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
 // HookEvent is one command-surface savings record.
@@ -96,11 +98,43 @@ func Open(path string) (*Ledger, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(schema); err != nil {
+	if err := busyRetry(func() error { _, e := db.Exec(schema); return e }); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return &Ledger{db: db}, nil
+}
+
+// busyRetry runs f, retrying while SQLite reports the database locked.
+// SQLite bypasses the busy handler (and with it the busy_timeout) in
+// several lock states, so concurrent short-lived processes can see
+// immediate SQLITE_BUSY regardless of the timeout — observed on Windows
+// under schema-creation races. A bounded application-level retry is the
+// only reliable cross-platform behavior.
+func busyRetry(f func() error) error {
+	delay := 5 * time.Millisecond
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		err := f()
+		if err == nil || !isBusy(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(delay)
+		if delay < 100*time.Millisecond {
+			delay *= 2
+		}
+	}
+}
+
+// isBusy matches SQLITE_BUSY (5) and SQLITE_LOCKED (6), typed when the
+// driver surfaces its error type and by message otherwise.
+func isBusy(err error) bool {
+	var se *sqlite.Error
+	if errors.As(err, &se) {
+		return se.Code() == 5 || se.Code() == 6
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "SQLITE_BUSY") || strings.Contains(msg, "SQLITE_LOCKED")
 }
 
 // Close releases the database handle.
@@ -111,13 +145,15 @@ func (l *Ledger) RecordHookEvent(ev HookEvent) error {
 	if ev.TS.IsZero() {
 		ev.TS = time.Now()
 	}
-	_, err := l.db.Exec(
-		`INSERT INTO hook_events (ts, session_id, kind, tool, command, tokens_before, tokens_after, raw_path)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		ev.TS.UTC().Format(time.RFC3339), ev.SessionID, ev.Kind, ev.Tool, ev.Command,
-		ev.TokensBefore, ev.TokensAfter, ev.RawPath,
-	)
-	return err
+	return busyRetry(func() error {
+		_, err := l.db.Exec(
+			`INSERT INTO hook_events (ts, session_id, kind, tool, command, tokens_before, tokens_after, raw_path)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			ev.TS.UTC().Format(time.RFC3339), ev.SessionID, ev.Kind, ev.Tool, ev.Command,
+			ev.TokensBefore, ev.TokensAfter, ev.RawPath,
+		)
+		return err
+	})
 }
 
 // APICall is one proxy-surface usage record: exact, provider-reported.
@@ -137,13 +173,15 @@ func (l *Ledger) RecordAPICall(c APICall) error {
 	if c.TS.IsZero() {
 		c.TS = time.Now()
 	}
-	_, err := l.db.Exec(
-		`INSERT INTO api_calls (ts, app_tag, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.TS.UTC().Format(time.RFC3339), c.AppTag, c.Provider, c.Model,
-		c.Input, c.Output, c.CacheRead, c.CacheWrite,
-	)
-	return err
+	return busyRetry(func() error {
+		_, err := l.db.Exec(
+			`INSERT INTO api_calls (ts, app_tag, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			c.TS.UTC().Format(time.RFC3339), c.AppTag, c.Provider, c.Model,
+			c.Input, c.Output, c.CacheRead, c.CacheWrite,
+		)
+		return err
+	})
 }
 
 // APITotals is an aggregate over api_calls rows.
@@ -216,12 +254,14 @@ func (l *Ledger) RecordProxySaving(p ProxySaving) error {
 	if p.TS.IsZero() {
 		p.TS = time.Now()
 	}
-	_, err := l.db.Exec(
-		`INSERT INTO proxy_savings (ts, app_tag, provider, tokens_before, tokens_after)
-		 VALUES (?, ?, ?, ?, ?)`,
-		p.TS.UTC().Format(time.RFC3339), p.AppTag, p.Provider, p.TokensBefore, p.TokensAfter,
-	)
-	return err
+	return busyRetry(func() error {
+		_, err := l.db.Exec(
+			`INSERT INTO proxy_savings (ts, app_tag, provider, tokens_before, tokens_after)
+			 VALUES (?, ?, ?, ?, ?)`,
+			p.TS.UTC().Format(time.RFC3339), p.AppTag, p.Provider, p.TokensBefore, p.TokensAfter,
+		)
+		return err
+	})
 }
 
 // ProxySavingsTotals aggregates proxy_savings since a point in time.
