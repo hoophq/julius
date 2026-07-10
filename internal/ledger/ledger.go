@@ -7,7 +7,9 @@
 //	proxy_savings — proxy request compression, token counts are ESTIMATES
 //
 // Writes come from short-lived concurrent processes (hooks, wrappers), so
-// the database runs in WAL mode with a short busy timeout. Recording is
+// the database runs in WAL mode with a busy timeout generous enough for
+// slow filesystems; writes happen after command output is already
+// delivered, so waiting costs nothing on the command path. Recording is
 // best-effort everywhere: analytics must never break a command.
 package ledger
 
@@ -90,7 +92,7 @@ func Open(path string) (*Ledger, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(200)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(2000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, err
 	}
