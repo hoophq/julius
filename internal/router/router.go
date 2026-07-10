@@ -67,7 +67,7 @@ func SplitChain(cmd string) []Part {
 			inDouble = !inDouble
 		case r == '`' && !inSingle:
 			inBacktick = !inBacktick
-		case (r == '(' ) && !inSingle && !inDouble && !inBacktick:
+		case (r == '(') && !inSingle && !inDouble && !inBacktick:
 			depth++
 		case (r == ')') && !inSingle && !inDouble && !inBacktick && depth > 0:
 			depth--

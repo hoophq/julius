@@ -19,29 +19,29 @@ type File struct {
 //	strip_ansi → replace → respond → keep_lines → drop_lines →
 //	max_line_length → head/tail → if_empty
 type Spec struct {
-	Description string        `toml:"description"`
-	Command     string        `toml:"command"`       // regex matched against the command line
-	DetectOutput []string     `toml:"detect_output"` // regexes matched against raw OUTPUT (content sniffing)
-	StripANSI   bool          `toml:"strip_ansi"`
-	MergeStderr bool          `toml:"merge_stderr"`
-	Replace     []Replacement `toml:"replace"`
-	Respond     []Responder   `toml:"respond"`
-	KeepLines   []string      `toml:"keep_lines"`
-	DropLines   []string      `toml:"drop_lines"`
-	MaxLineLen  int           `toml:"max_line_length"`
-	Head        int           `toml:"head"`
-	Tail        int           `toml:"tail"`
-	IfEmpty     string        `toml:"if_empty"`
-	Tests       []SpecTest    `toml:"tests"`
+	Description  string        `toml:"description"`
+	Command      string        `toml:"command"`       // regex matched against the command line
+	DetectOutput []string      `toml:"detect_output"` // regexes matched against raw OUTPUT (content sniffing)
+	StripANSI    bool          `toml:"strip_ansi"`
+	MergeStderr  bool          `toml:"merge_stderr"`
+	Replace      []Replacement `toml:"replace"`
+	Respond      []Responder   `toml:"respond"`
+	KeepLines    []string      `toml:"keep_lines"`
+	DropLines    []string      `toml:"drop_lines"`
+	MaxLineLen   int           `toml:"max_line_length"`
+	Head         int           `toml:"head"`
+	Tail         int           `toml:"tail"`
+	IfEmpty      string        `toml:"if_empty"`
+	Tests        []SpecTest    `toml:"tests"`
 
-	name    string
-	cmdRe   *regexp.Regexp
-	detRe   []*regexp.Regexp
-	replRe  []*regexp.Regexp
-	respRe  []*regexp.Regexp
-	unlRe   []*regexp.Regexp
-	keepRe  []*regexp.Regexp
-	dropRe  []*regexp.Regexp
+	name   string
+	cmdRe  *regexp.Regexp
+	detRe  []*regexp.Regexp
+	replRe []*regexp.Regexp
+	respRe []*regexp.Regexp
+	unlRe  []*regexp.Regexp
+	keepRe []*regexp.Regexp
+	dropRe []*regexp.Regexp
 }
 
 // Replacement is a regex substitution applied line by line.
