@@ -4,8 +4,28 @@
 package router
 
 import (
+	"regexp"
 	"strings"
 )
+
+// envPrefixRe matches a leading run of shell environment assignments
+// (FOO=bar BAZ="a b" ...) so they can be preserved ahead of the julius
+// wrapper: `CGO_ENABLED=0 go build` must rewrite to
+// `CGO_ENABLED=0 julius go build`, not `julius CGO_ENABLED=0 go build`.
+// The assignments still reach the wrapped child, which inherits julius's
+// environment.
+var envPrefixRe = regexp.MustCompile(`^((?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s"']*)\s+)+)(\S.*)$`)
+
+// SplitEnvPrefix separates a leading env-assignment run from the command.
+// Returns ("", text) when there is no such prefix. Exported so coverage
+// analysis (scan) classifies commands exactly as the router rewrites them.
+func SplitEnvPrefix(text string) (prefix, rest string) {
+	m := envPrefixRe.FindStringSubmatch(text)
+	if m == nil {
+		return "", text
+	}
+	return m[1], m[2]
+}
 
 // Part is one segment of a shell command chain. Sep is the separator that
 // FOLLOWS the segment ("" for the last one).
@@ -90,9 +110,12 @@ func Route(cmd string, routable Matcher) (string, bool) {
 	var b strings.Builder
 	for _, p := range parts {
 		text := p.Text
-		if text != "" && !isWrapped(text) && routable(text) {
-			text = "julius " + text
-			changed = true
+		if text != "" {
+			env, core := SplitEnvPrefix(text)
+			if !isWrapped(core) && routable(core) {
+				text = env + "julius " + core
+				changed = true
+			}
 		}
 		b.WriteString(text)
 		if p.Sep != "" {

@@ -59,6 +59,16 @@ func TestRoute(t *testing.T) {
 		{"julius git add . && git push", "julius git add . && julius git push", true},
 		// mixed routable and not
 		{"cd /tmp && go test ./...", "cd /tmp && julius go test ./...", true},
+		// env-prefixed: assignments stay ahead of julius, reach the child
+		{"CGO_ENABLED=0 go test ./...", "CGO_ENABLED=0 julius go test ./...", true},
+		{"NODE_ENV=test FOO=bar go test", "NODE_ENV=test FOO=bar julius go test", true},
+		{`FOO="a b" go test`, `FOO="a b" julius go test`, true},
+		// env-prefixed but not routable → untouched
+		{"FOO=bar ls -la", "FOO=bar ls -la", false},
+		// already-wrapped after an env prefix → idempotent
+		{"FOO=bar julius go test", "FOO=bar julius go test", false},
+		// env prefix on one segment of a chain
+		{"CGO_ENABLED=0 go test ./... && ls", "CGO_ENABLED=0 julius go test ./... && ls", true},
 	}
 	for _, c := range cases {
 		got, changed := Route(c.in, gitOrGoTest)

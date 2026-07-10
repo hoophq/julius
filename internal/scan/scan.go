@@ -198,12 +198,18 @@ func classify(cmd, stdout string, reg *filter.Registry, rep *Report, missed map[
 		return
 	}
 
-	f := reg.Pick(cmd)
+	// Match exactly as the router rewrites: strip any leading env-assignment
+	// prefix so `CGO_ENABLED=0 go build` is recognized as routable, and check
+	// each chain segment.
+	pick := func(c string) filter.Filter {
+		_, core := router.SplitEnvPrefix(c)
+		return reg.Pick(core)
+	}
+	f := pick(cmd)
 	if f == nil {
-		// try per-segment for chains
 		for _, p := range router.SplitChain(cmd) {
-			if p.Text != "" && reg.Pick(p.Text) != nil {
-				f = reg.Pick(p.Text)
+			if p.Text != "" && pick(p.Text) != nil {
+				f = pick(p.Text)
 				break
 			}
 		}
@@ -237,6 +243,7 @@ func classify(cmd, stdout string, reg *filter.Registry, rep *Report, missed map[
 // family reduces a command line to a rankable family name, e.g.
 // "kubectl get pods -A" → "kubectl get".
 func family(cmd string) string {
+	_, cmd = router.SplitEnvPrefix(cmd)
 	fields := strings.Fields(cmd)
 	if len(fields) == 0 {
 		return "(empty)"
