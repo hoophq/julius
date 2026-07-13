@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -106,6 +107,46 @@ func TestTestFilterFilesCRLF(t *testing.T) {
 	}
 	if len(reports[0].Results) != 1 || !reports[0].Results[0].Pass {
 		t.Fatalf("CRLF-authored test must pass: %+v", reports[0].Results)
+	}
+}
+
+// A stat error other than not-exist must keep the default path in
+// discovery: the later read failure produces a report and a failing
+// exit code, instead of "no custom filter files found" + exit 0
+// silently skipping a CI gate.
+func TestDefaultFilterFilesKeepInaccessible(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission-mode semantics differ on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores permission bits")
+	}
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.Mkdir(".julius", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(".julius", "filters.toml"), []byte("[filters]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(".julius", 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, ".julius"), 0o755) })
+
+	paths := defaultFilterFiles()
+	found := false
+	for _, p := range paths {
+		if p == filepath.Join(".julius", "filters.toml") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("inaccessible project file must stay in discovery, not vanish")
+	}
+	reports := testFilterFiles([]string{filepath.Join(".julius", "filters.toml")})
+	if reports[0].ReadErr == nil || reports[0].Failures() != 1 {
+		t.Fatalf("inaccessible file must fail the run: %+v", reports[0])
 	}
 }
 

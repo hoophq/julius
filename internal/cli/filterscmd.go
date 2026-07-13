@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -78,17 +79,21 @@ func dedupe(paths []string) []string {
 	return out
 }
 
-// defaultFilterFiles returns the project and user filter files that
-// exist — the same two tiers the registry loads.
+// defaultFilterFiles returns the project and user filter files — the
+// same two tiers the registry loads. Only a confirmed not-exist drops a
+// path: any other stat error (permissions, unreachable parent) keeps it
+// in, so the read failure surfaces as a report with a failing exit code
+// instead of a silent "nothing to test" exit 0 under a CI gate.
 func defaultFilterFiles() []string {
 	var paths []string
 	for _, p := range []string{filepath.Join(".julius", "filters.toml"), userFilterFile()} {
 		if p == "" {
 			continue
 		}
-		if _, err := os.Stat(p); err == nil {
-			paths = append(paths, p)
+		if _, err := os.Stat(p); err != nil && errors.Is(err, os.ErrNotExist) {
+			continue
 		}
+		paths = append(paths, p)
 	}
 	return paths
 }
