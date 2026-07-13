@@ -2,10 +2,13 @@ module github.com/hoophq/julius
 
 go 1.25.0
 
-require github.com/spf13/cobra v1.10.2
+require (
+	github.com/BurntSushi/toml v1.6.0
+	github.com/spf13/cobra v1.10.2
+	modernc.org/sqlite v1.53.0
+)
 
 require (
-	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -17,5 +20,4 @@ require (
 	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.53.0 // indirect
 )

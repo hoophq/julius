@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/hoophq/julius/internal/ledger"
+	"github.com/hoophq/julius/internal/pricing"
 	"github.com/hoophq/julius/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -99,6 +100,10 @@ func renderProxySavings(l *ledger.Ledger, since time.Time, days int) {
 
 // renderAPIUsage prints the proxy surface. The two surfaces are reported
 // separately by design: hook numbers are estimates, these are exact.
+// Cost is the one estimated figure in this section — exact tokens priced
+// through a dated rate table — so it is labeled as an estimate with the
+// table's as-of date, and models missing from the table render as "—"
+// rather than being guessed.
 func renderAPIUsage(l *ledger.Ledger, since time.Time, days int) {
 	api, err := l.APIUsage(since)
 	if err != nil || api.Calls == 0 {
@@ -112,14 +117,77 @@ func renderAPIUsage(l *ledger.Ledger, since time.Time, days int) {
 		ui.Bold(fmt.Sprintf("%d", api.Calls)),
 		ui.Bold(fmtTokens(api.Input)), ui.Bold(fmtTokens(api.Output)),
 		ui.Dim("read"), fmtTokens(api.CacheRead), ui.Dim("write"), fmtTokens(api.CacheWrite))
+
+	tbl, tblErr := pricing.Load()
+	renderAPICost(l, since, tbl)
+	if tblErr != nil {
+		fmt.Printf("  %s\n", ui.Warn(fmt.Sprintf("pricing override ignored: %v", tblErr)))
+	}
+
 	byApp, err := l.APIUsageByApp(since, 10)
 	if err != nil || len(byApp) == 0 {
 		return
 	}
-	fmt.Printf("\n  %s\n", ui.Dim(fmt.Sprintf("%-16s %-24s %9s %9s %7s", "app", "model", "in", "out", "calls")))
+	fmt.Printf("\n  %s\n", ui.Dim(fmt.Sprintf("%-16s %-24s %9s %9s %7s %9s", "app", "model", "in", "out", "calls", "cost")))
 	for _, a := range byApp {
-		fmt.Printf("  %-16s %-24s %9s %9s %7d\n",
-			truncate(a.AppTag, 16), truncate(a.Model, 24), fmtTokens(a.Input), fmtTokens(a.Output), a.Calls)
+		cost := "—"
+		if r, ok := tbl.Lookup(a.Model); ok {
+			cost = "~" + fmtUSD(r.Cost(a.Provider, a.Input, a.Output, a.CacheRead, a.CacheWrite))
+		}
+		fmt.Printf("  %-16s %-24s %9s %9s %7d %9s\n",
+			truncate(a.AppTag, 16), truncate(a.Model, 24), fmtTokens(a.Input), fmtTokens(a.Output), a.Calls, cost)
+	}
+}
+
+// renderAPICost prints the cost line for the API-usage section: spent,
+// plus cost avoided by cache reads when there are any. Totals cover
+// every recorded model (not just the top-N shown below); models absent
+// from the pricing table are counted and disclosed, never estimated.
+func renderAPICost(l *ledger.Ledger, since time.Time, tbl pricing.Table) {
+	byModel, err := l.APIUsageByModel(since)
+	if err != nil || len(byModel) == 0 {
+		return
+	}
+	var spent, avoided float64
+	priced, unpriced := 0, 0
+	for _, m := range byModel {
+		r, ok := tbl.Lookup(m.Model)
+		if !ok {
+			unpriced++
+			continue
+		}
+		priced++
+		spent += r.Cost(m.Provider, m.Input, m.Output, m.CacheRead, m.CacheWrite)
+		avoided += r.CacheAvoided(m.CacheRead)
+	}
+	if priced == 0 {
+		fmt.Printf("  cost  %s\n", ui.Dim("— no recorded model is in the pricing table (see `julius pricing`)"))
+		return
+	}
+	line := fmt.Sprintf("  cost  %s spent", ui.Bold("~"+fmtUSD(spent)))
+	if avoided >= 0.005 {
+		line += fmt.Sprintf("   %s avoided via caching", ui.Good("~"+fmtUSD(avoided)))
+	}
+	note := fmt.Sprintf("estimate · pricing as of %s", tbl.AsOf)
+	if tbl.Source != "builtin" {
+		note += " · custom table"
+	}
+	if unpriced > 0 {
+		note += fmt.Sprintf(" · %d model(s) not priced", unpriced)
+	}
+	fmt.Printf("%s   %s\n", line, ui.Dim("· "+note))
+}
+
+func fmtUSD(v float64) string {
+	switch {
+	case v < 0.005:
+		return "<$0.01"
+	case v < 100:
+		return fmt.Sprintf("$%.2f", v)
+	case v < 10_000:
+		return fmt.Sprintf("$%.0f", v)
+	default:
+		return fmt.Sprintf("$%.1fk", v/1000)
 	}
 }
 

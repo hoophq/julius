@@ -207,18 +207,19 @@ func (l *Ledger) APIUsage(since time.Time) (APITotals, error) {
 
 // AppUsage is a per-app/model aggregate row.
 type AppUsage struct {
-	AppTag string
-	Model  string
+	AppTag   string
+	Provider string
+	Model    string
 	APITotals
 }
 
 // APIUsageByApp breaks down proxy usage per app tag and model.
 func (l *Ledger) APIUsageByApp(since time.Time, limit int) ([]AppUsage, error) {
 	rows, err := l.db.Query(
-		`SELECT app_tag, model, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+		`SELECT app_tag, provider, model, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
 		        COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_write_tokens),0)
 		 FROM api_calls WHERE ts >= ?
-		 GROUP BY app_tag, model
+		 GROUP BY app_tag, provider, model
 		 ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
 		 LIMIT ?`,
 		since.UTC().Format(time.RFC3339), limit,
@@ -230,10 +231,42 @@ func (l *Ledger) APIUsageByApp(since time.Time, limit int) ([]AppUsage, error) {
 	var out []AppUsage
 	for rows.Next() {
 		var a AppUsage
-		if err := rows.Scan(&a.AppTag, &a.Model, &a.Calls, &a.Input, &a.Output, &a.CacheRead, &a.CacheWrite); err != nil {
+		if err := rows.Scan(&a.AppTag, &a.Provider, &a.Model, &a.Calls, &a.Input, &a.Output, &a.CacheRead, &a.CacheWrite); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// ModelUsage is a per-provider/model aggregate row.
+type ModelUsage struct {
+	Provider string
+	Model    string
+	APITotals
+}
+
+// APIUsageByModel aggregates the proxy surface per provider and model,
+// with no row limit: cost totals must cover every row, not a top-N.
+func (l *Ledger) APIUsageByModel(since time.Time) ([]ModelUsage, error) {
+	rows, err := l.db.Query(
+		`SELECT provider, model, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+		        COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_write_tokens),0)
+		 FROM api_calls WHERE ts >= ?
+		 GROUP BY provider, model`,
+		since.UTC().Format(time.RFC3339),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ModelUsage
+	for rows.Next() {
+		var m ModelUsage
+		if err := rows.Scan(&m.Provider, &m.Model, &m.Calls, &m.Input, &m.Output, &m.CacheRead, &m.CacheWrite); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
 	}
 	return out, rows.Err()
 }
