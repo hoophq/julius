@@ -94,6 +94,38 @@ command = '['
 	}
 }
 
+// A filters.toml checked out with CRLF endings must not fail on the
+// invisible \r that TOML preserves inside multi-line want strings.
+func TestTestFilterFilesCRLF(t *testing.T) {
+	body := "[filters.d]\r\ncommand = '^d\\b'\r\nkeep_lines = ['keep']\r\n\r\n" +
+		"[[filters.d.tests]]\r\nname = \"crlf\"\r\ninput = \"\"\"\r\nkeep\r\nnoise\r\n\"\"\"\r\nwant = \"\"\"\r\nkeep\r\n\"\"\"\r\n"
+	path := writeFilterFile(t, body)
+	reports := testFilterFiles([]string{path})
+	if reports[0].ParseErr != nil {
+		t.Fatalf("parse: %v", reports[0].ParseErr)
+	}
+	if len(reports[0].Results) != 1 || !reports[0].Results[0].Pass {
+		t.Fatalf("CRLF-authored test must pass: %+v", reports[0].Results)
+	}
+}
+
+func TestDedupePaths(t *testing.T) {
+	got := dedupe([]string{"a", "b", "a", "c", "b"})
+	if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
+		t.Fatalf("dedupe = %v", got)
+	}
+}
+
+// A typo'd subcommand must fail loudly — this command is a CI gate, and
+// help-with-exit-0 keeps a pipeline green while running nothing.
+func TestFiltersUnknownSubcommandFails(t *testing.T) {
+	root := newRootCmd("test")
+	root.SetArgs([]string{"filters", "tst"})
+	if err := root.Execute(); err == nil {
+		t.Fatal("unknown subcommand must return an error")
+	}
+}
+
 // Unnamed cases get positional labels so failures stay addressable.
 func TestTestFilterFilesUnnamedCase(t *testing.T) {
 	path := writeFilterFile(t, `

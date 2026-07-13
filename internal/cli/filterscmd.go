@@ -15,6 +15,15 @@ func newFiltersCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "filters",
 		Short: "Work with custom filter files",
+		// An unknown subcommand must fail loudly: this command is a CI
+		// gate, and a typo that prints help with exit 0 keeps a pipeline
+		// green while running nothing.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return fmt.Errorf("unknown subcommand %q — did you mean `julius filters test`?", args[0])
+			}
+			return cmd.Help()
+		},
 	}
 	cmd.AddCommand(newFiltersTestCmd())
 	return cmd
@@ -33,11 +42,15 @@ func newFiltersTestCmd() *cobra.Command {
 			"Exits non-zero on any failure, so it works as a CI gate for teams\n" +
 			"versioning project filters.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			paths := args
+			paths := dedupe(args)
 			if len(paths) == 0 {
 				paths = defaultFilterFiles()
 				if len(paths) == 0 {
-					fmt.Println(ui.Dim("no custom filter files found — looked for .julius/filters.toml and " + userFilterFile()))
+					looked := filepath.Join(".julius", "filters.toml")
+					if u := userFilterFile(); u != "" {
+						looked += " and " + u
+					}
+					fmt.Println(ui.Dim("no custom filter files found — looked for " + looked))
 					return nil
 				}
 			}
@@ -49,6 +62,20 @@ func newFiltersTestCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// dedupe drops repeated paths, keeping first-seen order — a glob that
+// expands to an already-named file must not double-count its results.
+func dedupe(paths []string) []string {
+	seen := make(map[string]bool, len(paths))
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // defaultFilterFiles returns the project and user filter files that

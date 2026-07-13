@@ -25,7 +25,10 @@ func (s *Spec) RunTests() []TestResult {
 			name = fmt.Sprintf("#%d", i+1)
 		}
 		got := strings.TrimRight(Finalize(tc.Input, s.Apply(tc.Input, tc.ExitCode)).Output, "\n")
-		want := strings.TrimRight(tc.Want, "\n")
+		// Apply normalizes CRLF in the input; want gets the same
+		// treatment, or a filters.toml checked out with CRLF endings
+		// fails every test on an invisible trailing \r.
+		want := strings.TrimRight(strings.ReplaceAll(tc.Want, "\r\n", "\n"), "\n")
 		results = append(results, TestResult{
 			Filter: s.name, Test: name, Got: got, Want: want, Pass: got == want,
 		})
