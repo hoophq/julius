@@ -29,6 +29,43 @@ truncation or loss. Findings that constrain the design:
   filtering), skip small outputs, and apply the engine's never-larger
   guard unconditionally.
 
+## Cost estimates only on the exact surface (2026-07-13)
+
+`julius savings` converts tokens to dollars only for the API-usage
+surface, where token counts are exact and the model is known per call.
+The hook and compression surfaces stay token-only: their counts are
+estimates, and pricing an estimate would present a fabricated number as
+money.
+
+The rate table is the one estimated input, so its uncertainty is made
+explicit rather than hidden:
+
+- Every cost is labeled with the table's as-of date.
+- Models absent from the table render as "—" and are counted in a
+  disclosure note — never priced by guesswork. The builtin table only
+  carries rates confirmed against provider pricing pages on the as-of
+  date. Prefix matching exists solely for dated snapshots (a '-' or '@'
+  separator followed by a date-shaped tail); a named variant like
+  "-mini" is a differently-priced model and stays unpriced rather than
+  inheriting its base entry's rate.
+- The caching figure is net: read-side savings minus the write premium
+  paid above the input rate. A window where writes outweigh reads shows
+  a negative net rather than hiding it.
+- A user table (`<user config dir>/julius/pricing.toml` or
+  `$JULIUS_PRICING`) replaces the builtin table entirely — no merging —
+  so the provenance of every rate is unambiguous. `julius pricing`
+  shows the active table and its source.
+
+Provider reporting semantics are normalized at pricing time, not in the
+ledger: Anthropic's `input_tokens` exclude cache reads/writes while
+OpenAI's `prompt_tokens` include cached tokens, and the ledger stores
+each provider's numbers verbatim. Known imprecision that stays
+documented instead of modeled: Anthropic 1-hour cache writes bill at 2×
+input but the provider-reported aggregate can't be told apart from
+5-minute writes (the table prices writes at the 5-minute 1.25× rate),
+and time-boxed introductory pricing is baked in at the table's as-of
+date.
+
 ## Read results are never rewritten (2026-07-08)
 
 The PostToolUse processor compresses Bash, Grep (content mode), and Glob

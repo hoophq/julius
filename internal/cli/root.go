@@ -15,7 +15,7 @@ import (
 // reserved names route to cobra instead of the wrapper.
 var reserved = map[string]bool{
 	"init": true, "doctor": true, "savings": true, "route": true,
-	"hook": true, "raw": true, "proxy": true, "scan": true,
+	"hook": true, "raw": true, "proxy": true, "scan": true, "pricing": true,
 	"help": true, "completion": true, "__complete": true, "__completeNoDesc": true,
 }
 
@@ -36,6 +36,7 @@ func newRootCmd(version string) *cobra.Command {
 	root.AddCommand(newDoctorCmd())
 	root.AddCommand(newScanCmd())
 	root.AddCommand(newProxyCmd())
+	root.AddCommand(newPricingCmd())
 	return root
 }
 

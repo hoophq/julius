@@ -96,6 +96,59 @@ func TestConcurrentWriters(t *testing.T) {
 	}
 }
 
+func TestAPIUsageAggregates(t *testing.T) {
+	l := openTemp(t)
+	base := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
+	calls := []APICall{
+		{TS: base, AppTag: "bot", Provider: "anthropic", Model: "claude-opus-4-8", Input: 1000, Output: 100, CacheRead: 400, CacheWrite: 50},
+		{TS: base.Add(time.Minute), AppTag: "bot", Provider: "anthropic", Model: "claude-opus-4-8", Input: 500, Output: 50},
+		{TS: base.Add(2 * time.Minute), AppTag: "batch", Provider: "openai", Model: "gpt-5.4", Input: 2000, Output: 200, CacheRead: 800},
+	}
+	for _, c := range calls {
+		if err := l.RecordAPICall(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	byApp, err := l.APIUsageByApp(base.Add(-time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byApp) != 2 {
+		t.Fatalf("byApp rows = %d, want 2", len(byApp))
+	}
+	for _, a := range byApp {
+		if a.Provider == "" {
+			t.Errorf("row %s/%s has empty provider", a.AppTag, a.Model)
+		}
+	}
+	if byApp[0].AppTag != "batch" || byApp[0].Provider != "openai" {
+		t.Errorf("ordering by volume: %+v", byApp[0])
+	}
+
+	byModel, err := l.APIUsageByModel(base.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byModel) != 2 {
+		t.Fatalf("byModel rows = %d, want 2", len(byModel))
+	}
+	for _, m := range byModel {
+		switch m.Model {
+		case "claude-opus-4-8":
+			if m.Provider != "anthropic" || m.Calls != 2 || m.Input != 1500 || m.Output != 150 || m.CacheRead != 400 || m.CacheWrite != 50 {
+				t.Errorf("opus aggregate = %+v", m)
+			}
+		case "gpt-5.4":
+			if m.Provider != "openai" || m.Calls != 1 || m.Input != 2000 || m.CacheRead != 800 {
+				t.Errorf("gpt aggregate = %+v", m)
+			}
+		default:
+			t.Errorf("unexpected model %q", m.Model)
+		}
+	}
+}
+
 func TestProxySavings(t *testing.T) {
 	l := openTemp(t)
 	base := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
