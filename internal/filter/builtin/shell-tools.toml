@@ -1,0 +1,65 @@
+# Shell text tools run through Bash bypass the native-tool caps the hook
+# applies (Grep is capped at 120 lines; shell grep was unbounded). These
+# filters close that gap. Caps only — matched/printed lines are the
+# payload, so nothing is dropped, just bounded.
+
+[filters.grep]
+description = "shell grep: capped matches, same 120-line budget as native Grep"
+command = '^(e|f)?grep\b'
+strip_ansi = true
+max_line_length = 500
+head = 120
+
+[[filters.grep.tests]]
+name = "short match list unchanged"
+input = """
+internal/router/router.go:14:func SplitEnvPrefix(text string) (prefix, rest string) {
+internal/router/router.go:40:func SplitChain(cmd string) []Part {
+"""
+want = """
+internal/router/router.go:14:func SplitEnvPrefix(text string) (prefix, rest string) {
+internal/router/router.go:40:func SplitChain(cmd string) []Part {
+"""
+
+[[filters.grep.tests]]
+name = "minified line truncated"
+input = "app.min.js:1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+want = "app.min.js:1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+
+[filters.ls]
+description = "ls: capped listing"
+command = '^ls\b'
+strip_ansi = true
+head = 100
+
+[[filters.ls.tests]]
+name = "short listing unchanged"
+input = """
+README.md
+go.mod
+go.sum
+"""
+want = """
+README.md
+go.mod
+go.sum
+"""
+
+[filters.sed]
+description = "sed: capped output"
+command = '^sed\b'
+max_line_length = 500
+head = 120
+
+[[filters.sed.tests]]
+name = "range print unchanged"
+input = """
+func main() {
+	fmt.Println("hello")
+}
+"""
+want = """
+func main() {
+	fmt.Println("hello")
+}
+"""

@@ -17,6 +17,52 @@ ID          STATUS      TITLE           WORKFLOW    BRANCH  EVENT  ELAPSED
 2888854426  completed✓  feat: filters   ci          main    push   1m31s
 """
 
+# gh run view — plain view is a short summary and passes under the caps;
+# --log/--log-failed output repeats job, step, and a timestamp on every
+# line. The timestamp is pure noise; the tail keeps the end of the log,
+# where failures and summaries land.
+[filters.gh-run-view]
+description = "gh run view: timestamps stripped, log tail kept"
+command = '^gh\s+run\s+view\b'
+strip_ansi = true
+replace = [
+  { pattern = '\t2\d{3}-\d{2}-\d{2}T[0-9:.]+Z\s?', with = "\t" },
+  { pattern = '##\[group\]', with = "" },
+]
+drop_lines = ['##\[endgroup\]$']
+tail = 150
+
+[[filters.gh-run-view.tests]]
+name = "log timestamps stripped, endgroup dropped"
+input = """
+test	Run go test ./...	2026-07-10T21:13:54.8208255Z ##[group]Run go test ./...
+test	Run go test ./...	2026-07-10T21:13:56.9617155Z ok  	pkg	0.2s
+test	Run go test ./...	2026-07-10T21:13:54.8259333Z ##[endgroup]
+"""
+want = """
+test	Run go test ./...	Run go test ./...
+test	Run go test ./...	ok  	pkg	0.2s
+"""
+
+[[filters.gh-run-view.tests]]
+name = "plain summary unchanged"
+input = """
+✓ main ci · 29123153293
+Triggered via push about 1 hour ago
+
+JOBS
+✓ lint in 29s (ID 86462663742)
+✓ test (macos-latest) in 27s (ID 86462663783)
+"""
+want = """
+✓ main ci · 29123153293
+Triggered via push about 1 hour ago
+
+JOBS
+✓ lint in 29s (ID 86462663742)
+✓ test (macos-latest) in 27s (ID 86462663783)
+"""
+
 # gh pr view — keep the substance, drop the URL footer boilerplate.
 [filters.gh-pr-view]
 description = "gh pr view: capped body"

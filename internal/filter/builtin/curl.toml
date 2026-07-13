@@ -1,0 +1,24 @@
+# curl — response bodies the agent asked for are payload, so lines are
+# never truncated (a minified JSON response must survive intact); only
+# the line count is bounded, which catches long HTML/docs fetches. The
+# progress meter goes to stderr and is passed through untouched.
+
+[filters.curl]
+description = "curl: capped response body, lines kept intact"
+command = '^curl\b'
+head = 250
+
+[[filters.curl.tests]]
+name = "json response unchanged"
+input = """
+{
+  "id": "run_123",
+  "status": "completed"
+}
+"""
+want = """
+{
+  "id": "run_123",
+  "status": "completed"
+}
+"""
