@@ -80,11 +80,11 @@ Every call is forwarded verbatim — streaming included — and the provider-rep
 
 ### Cost estimates
 
-`julius savings` prices the exact usage through a per-model rate table and shows what the traffic cost — and what cache reads avoided:
+`julius savings` prices the exact usage through a per-model rate table and shows what the traffic cost — and the net effect of caching (read savings minus write premiums):
 
 ```
   calls 6   in 30.4k   out 1.1k   cache read 24.6k / write 1.0k
-  cost  ~$0.11 spent   ~$0.06 avoided via caching   · estimate · pricing as of 2026-07-13
+  cost  ~$0.11 spent   ~$0.06 saved by caching   · estimate · pricing as of 2026-07-13
 ```
 
 The tokens are exact; the dollar figures are estimates because prices change — every cost is labeled with the rate table's as-of date, and models missing from the table render as `—` rather than being guessed. Cost applies only to this surface: the command and compression numbers are token estimates, and pricing an estimate would be a made-up number.

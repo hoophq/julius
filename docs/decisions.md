@@ -44,7 +44,13 @@ explicit rather than hidden:
 - Models absent from the table render as "—" and are counted in a
   disclosure note — never priced by guesswork. The builtin table only
   carries rates confirmed against provider pricing pages on the as-of
-  date.
+  date. Prefix matching exists solely for dated snapshots (a '-' or '@'
+  separator followed by a date-shaped tail); a named variant like
+  "-mini" is a differently-priced model and stays unpriced rather than
+  inheriting its base entry's rate.
+- The caching figure is net: read-side savings minus the write premium
+  paid above the input rate. A window where writes outweigh reads shows
+  a negative net rather than hiding it.
 - A user table (`<user config dir>/julius/pricing.toml` or
   `$JULIUS_PRICING`) replaces the builtin table entirely — no merging —
   so the provenance of every rate is unambiguous. `julius pricing`

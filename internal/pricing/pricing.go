@@ -11,6 +11,7 @@ package pricing
 import (
 	_ "embed"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,15 +85,39 @@ func Load() (Table, error) {
 	if t.AsOf == "" {
 		return Builtin(), fmt.Errorf("%s: missing as_of date", path)
 	}
+	if err := t.validate(); err != nil {
+		return Builtin(), fmt.Errorf("%s: %w", path, err)
+	}
 	t.Source = path
 	return t, nil
 }
 
+// validate rejects rate values that would make cost math lie: negative
+// numbers, NaN/Inf, or a model with no positive input and output rate.
+func (t Table) validate() error {
+	for name, r := range t.Models {
+		for field, v := range map[string]float64{
+			"input": r.Input, "output": r.Output,
+			"cache_read": r.CacheRead, "cache_write": r.CacheWrite,
+		} {
+			if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+				return fmt.Errorf("model %q: %s = %v is not a usable rate", name, field, v)
+			}
+		}
+		if r.Input <= 0 || r.Output <= 0 {
+			return fmt.Errorf("model %q: input and output rates must be positive", name)
+		}
+	}
+	return nil
+}
+
 // Lookup finds the rate for a model ID: exact match first, then the
-// longest table key that is a prefix ending at a separator ('-', '@',
-// ':', '_'). Dated or platform-suffixed variants match their base entry
-// ("claude-haiku-4-5-20251001" → "claude-haiku-4-5") while a key can
-// never claim a differently-priced sibling ("gpt-5" vs "gpt-5.1").
+// longest table key whose remaining suffix is a '-' or '@' separator
+// followed by digits only — a dated snapshot of the same model
+// ("claude-haiku-4-5-20251001" → "claude-haiku-4-5"). Anything else
+// after a key ("gpt-5.5-mini", "gpt-5.1-codex") is a different model
+// with its own price and stays unmatched: an unlisted model must
+// render as unpriced, never inherit a sibling's rate.
 func (t Table) Lookup(model string) (Rate, bool) {
 	if r, ok := t.Models[model]; ok {
 		return r, true
@@ -100,20 +125,39 @@ func (t Table) Lookup(model string) (Rate, bool) {
 	var best string
 	var bestRate Rate
 	for key, r := range t.Models {
-		if len(key) >= len(model) || !strings.HasPrefix(model, key) {
-			continue
-		}
-		switch model[len(key)] {
-		case '-', '@', ':', '_':
-		default:
-			continue
-		}
-		if len(key) > len(best) {
+		if len(key) > len(best) && snapshotOf(model, key) {
 			best, bestRate = key, r
 		}
 	}
 	return bestRate, best != ""
 }
+
+// snapshotOf reports whether model is key plus a dated-snapshot suffix:
+// a '-' or '@' separator followed by a date-shaped tail — digits and
+// dashes, starting and ending with a digit. Covers "-20251001" and
+// "-2025-11-13" style snapshots; rejects named variants like "-mini".
+func snapshotOf(model, key string) bool {
+	if len(model) <= len(key)+1 || !strings.HasPrefix(model, key) {
+		return false
+	}
+	switch model[len(key)] {
+	case '-', '@':
+	default:
+		return false
+	}
+	tail := model[len(key)+1:]
+	if !isDigit(tail[0]) || !isDigit(tail[len(tail)-1]) {
+		return false
+	}
+	for i := 0; i < len(tail); i++ {
+		if !isDigit(tail[i]) && tail[i] != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
 
 // Cost prices one usage aggregate, in USD. Providers report input
 // differently — Anthropic's input_tokens exclude cache reads and
@@ -135,12 +179,18 @@ func (r Rate) Cost(provider string, input, output, cacheRead, cacheWrite int) fl
 		float64(cacheWrite)/mtok*r.CacheWrite
 }
 
-// CacheAvoided is what the cache reads would have cost at the full
-// input rate minus what they did cost: cost avoided by caching.
-func (r Rate) CacheAvoided(cacheRead int) float64 {
-	diff := r.Input - r.CacheRead
-	if diff <= 0 || cacheRead <= 0 {
-		return 0
+// CacheNet is the net cost effect of caching: what the cache reads
+// saved against the full input rate, minus the premium paid on cache
+// writes above that rate. Positive means caching saved money in this
+// window; negative means write premiums outweighed read savings.
+func (r Rate) CacheNet(cacheRead, cacheWrite int) float64 {
+	const mtok = 1e6
+	var net float64
+	if d := r.Input - r.CacheRead; d > 0 && cacheRead > 0 {
+		net += float64(cacheRead) / mtok * d
 	}
-	return float64(cacheRead) / 1e6 * diff
+	if p := r.CacheWrite - r.Input; p > 0 && cacheWrite > 0 {
+		net -= float64(cacheWrite) / mtok * p
+	}
+	return net
 }

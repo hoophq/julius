@@ -119,7 +119,7 @@ func renderAPIUsage(l *ledger.Ledger, since time.Time, days int) {
 		ui.Dim("read"), fmtTokens(api.CacheRead), ui.Dim("write"), fmtTokens(api.CacheWrite))
 
 	tbl, tblErr := pricing.Load()
-	renderAPICost(l, since, tbl)
+	costLabeled := renderAPICost(l, since, tbl)
 	if tblErr != nil {
 		fmt.Printf("  %s\n", ui.Warn(fmt.Sprintf("pricing override ignored: %v", tblErr)))
 	}
@@ -128,66 +128,88 @@ func renderAPIUsage(l *ledger.Ledger, since time.Time, days int) {
 	if err != nil || len(byApp) == 0 {
 		return
 	}
-	fmt.Printf("\n  %s\n", ui.Dim(fmt.Sprintf("%-16s %-24s %9s %9s %7s %9s", "app", "model", "in", "out", "calls", "cost")))
+	// the per-row cost column only renders under the labeled cost line:
+	// a dollar figure must never appear without its as-of/estimate label
+	header := fmt.Sprintf("%-16s %-24s %9s %9s %7s", "app", "model", "in", "out", "calls")
+	if costLabeled {
+		header += fmt.Sprintf(" %9s", "cost")
+	}
+	fmt.Printf("\n  %s\n", ui.Dim(header))
 	for _, a := range byApp {
-		cost := "—"
-		if r, ok := tbl.Lookup(a.Model); ok {
-			cost = "~" + fmtUSD(r.Cost(a.Provider, a.Input, a.Output, a.CacheRead, a.CacheWrite))
+		row := fmt.Sprintf("%-16s %-24s %9s %9s %7d",
+			truncate(a.AppTag, 16), truncate(a.Model, 24), fmtTokens(a.Input), fmtTokens(a.Output), a.Calls)
+		if costLabeled {
+			cost := "—"
+			if r, ok := tbl.Lookup(a.Model); ok {
+				cost = "~" + fmtUSD(r.Cost(a.Provider, a.Input, a.Output, a.CacheRead, a.CacheWrite))
+			}
+			row += fmt.Sprintf(" %9s", cost)
 		}
-		fmt.Printf("  %-16s %-24s %9s %9s %7d %9s\n",
-			truncate(a.AppTag, 16), truncate(a.Model, 24), fmtTokens(a.Input), fmtTokens(a.Output), a.Calls, cost)
+		fmt.Printf("  %s\n", row)
 	}
 }
 
 // renderAPICost prints the cost line for the API-usage section: spent,
-// plus cost avoided by cache reads when there are any. Totals cover
-// every recorded model (not just the top-N shown below); models absent
-// from the pricing table are counted and disclosed, never estimated.
-func renderAPICost(l *ledger.Ledger, since time.Time, tbl pricing.Table) {
+// plus the net cost effect of caching when it is visible either way.
+// Totals cover every recorded model (not just the top-N shown below);
+// models absent from the pricing table are disclosed, never estimated.
+// Returns whether a labeled cost line was printed — callers must not
+// render any other dollar figure otherwise.
+func renderAPICost(l *ledger.Ledger, since time.Time, tbl pricing.Table) bool {
 	byModel, err := l.APIUsageByModel(since)
 	if err != nil || len(byModel) == 0 {
-		return
+		return false
 	}
-	var spent, avoided float64
-	priced, unpriced := 0, 0
+	var spent, cacheNet float64
+	priced := 0
+	unpricedModels := map[string]bool{}
 	for _, m := range byModel {
 		r, ok := tbl.Lookup(m.Model)
 		if !ok {
-			unpriced++
+			unpricedModels[m.Model] = true
 			continue
 		}
 		priced++
 		spent += r.Cost(m.Provider, m.Input, m.Output, m.CacheRead, m.CacheWrite)
-		avoided += r.CacheAvoided(m.CacheRead)
+		cacheNet += r.CacheNet(m.CacheRead, m.CacheWrite)
 	}
 	if priced == 0 {
 		fmt.Printf("  cost  %s\n", ui.Dim("— no recorded model is in the pricing table (see `julius pricing`)"))
-		return
+		return false
 	}
 	line := fmt.Sprintf("  cost  %s spent", ui.Bold("~"+fmtUSD(spent)))
-	if avoided >= 0.005 {
-		line += fmt.Sprintf("   %s avoided via caching", ui.Good("~"+fmtUSD(avoided)))
+	switch {
+	case cacheNet >= 0.005:
+		line += fmt.Sprintf("   %s saved by caching", ui.Good("~"+fmtUSD(cacheNet)))
+	case cacheNet <= -0.005:
+		line += fmt.Sprintf("   %s", ui.Dim(fmt.Sprintf("caching net -%s (write premium exceeded read savings)", fmtUSD(-cacheNet))))
 	}
 	note := fmt.Sprintf("estimate · pricing as of %s", tbl.AsOf)
 	if tbl.Source != "builtin" {
 		note += " · custom table"
 	}
-	if unpriced > 0 {
-		note += fmt.Sprintf(" · %d model(s) not priced", unpriced)
+	if n := len(unpricedModels); n > 0 {
+		note += fmt.Sprintf(" · %d model(s) not priced", n)
 	}
 	fmt.Printf("%s   %s\n", line, ui.Dim("· "+note))
+	return true
 }
 
+// fmtUSD thresholds sit at the rounding boundary of the next format so
+// a value never renders in the wrong bucket ($99.997 must be "$100",
+// not "$100.00").
 func fmtUSD(v float64) string {
 	switch {
 	case v < 0.005:
 		return "<$0.01"
-	case v < 100:
+	case v < 99.995:
 		return fmt.Sprintf("$%.2f", v)
-	case v < 10_000:
+	case v < 9_999.5:
 		return fmt.Sprintf("$%.0f", v)
+	case v < 999_950:
+		return fmt.Sprintf("$%.1fk", v/1_000)
 	default:
-		return fmt.Sprintf("$%.1fk", v/1000)
+		return fmt.Sprintf("$%.1fM", v/1_000_000)
 	}
 }
 
@@ -203,8 +225,9 @@ func fmtTokens(n int) string {
 }
 
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	return string(r[:n-1]) + "…"
 }
