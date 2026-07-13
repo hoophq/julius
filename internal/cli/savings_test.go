@@ -22,7 +22,9 @@ func captureStdout(t *testing.T, f func()) string {
 	os.Stdout = w
 	defer func() { os.Stdout = old }()
 	f()
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
 	out, err := io.ReadAll(r)
 	if err != nil {
 		t.Fatal(err)
