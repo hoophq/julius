@@ -78,6 +78,19 @@ python my_pipeline.py              # unchanged
 
 Every call is forwarded verbatim — streaming included — and the provider-reported usage lands in `julius savings`, broken down per app (`X-Julius-App` header) and model.
 
+### Cost estimates
+
+`julius savings` prices the exact usage through a per-model rate table and shows what the traffic cost — and the net effect of caching (read savings minus write premiums):
+
+```
+  calls 6   in 30.4k   out 1.1k   cache read 24.6k / write 1.0k
+  cost  ~$0.11 spent   ~$0.06 saved by caching   · estimate · pricing as of 2026-07-13
+```
+
+The tokens are exact; the dollar figures are estimates because prices change — every cost is labeled with the rate table's as-of date, and models missing from the table render as `—` rather than being guessed. Cost applies only to this surface: the command and compression numbers are token estimates, and pricing an estimate would be a made-up number.
+
+`julius pricing` shows the active table. To use your own rates (negotiated pricing, new models, batch discounts), write a table in the same TOML format to `<user config dir>/julius/pricing.toml` or point `JULIUS_PRICING` at one — it replaces the builtin table entirely, so there is never a question of which rate applied.
+
 ### Tool-result compression (opt-in)
 
 Agents resend their accumulated tool results with every request. Opt an app in and the proxy runs the same filter engine over that resent content before it reaches the provider:
@@ -102,6 +115,7 @@ The mutation is a single top-level `cache_control: {type: ephemeral}` field on A
 
 ```sh
 julius scan               # replay filters on session history: measured missed savings
+julius pricing            # show the model rate table behind cost estimates
 julius filters test       # run the inline tests in your custom filter files
 julius <any command>      # run anything through the filter engine manually
 julius raw <command>      # escape hatch: run with no filtering
