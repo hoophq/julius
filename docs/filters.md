@@ -65,21 +65,34 @@ You don't need to be careful — the engine is:
 
 ## Testing filters
 
-For **project and user filters**, validate by running the command through
-julius directly and comparing against the raw version:
+Write `[[filters.X.tests]]` cases next to the filter (see the example
+above) and run them with:
+
+```sh
+julius filters test                     # project + user files, whichever exist
+julius filters test path/to/filters.toml
+```
+
+Each case runs through the same Apply+Finalize path the wrapper uses and
+reports pass/fail with the got/want output on mismatch. A file that fails
+to parse or compile fails the run — the same problem that at runtime only
+appears as a skip-warning on stderr. The command exits non-zero on any
+failure, so teams versioning `.julius/filters.toml` can run it in CI.
+
+Spot-checking against live output also works:
 
 ```sh
 julius my-tool build        # filtered
 julius raw my-tool build    # unfiltered, for comparison
 ```
 
-A broken pattern can't hurt you — the engine guarantees above catch filters
-that inflate or empty the output, and a filter file that fails to parse is
-skipped with a warning rather than breaking your commands.
+A broken pattern can't hurt you either way — the engine guarantees above
+catch filters that inflate or empty the output, and a filter file that
+fails to parse is skipped with a warning rather than breaking your
+commands.
 
-For **built-in filters** (contributions to this repo), the inline
-`[[filters.X.tests]]` cases are executed by `go test` and every filter must
-ship at least one.
+For **built-in filters** (contributions to this repo), the same inline
+tests are executed by `go test` and every filter must ship at least one.
 
 ## Guidelines
 

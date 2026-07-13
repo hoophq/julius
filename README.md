@@ -116,13 +116,14 @@ The mutation is a single top-level `cache_control: {type: ephemeral}` field on A
 ```sh
 julius scan               # replay filters on session history: measured missed savings
 julius pricing            # show the model rate table behind cost estimates
+julius filters test       # run the inline tests in your custom filter files
 julius <any command>      # run anything through the filter engine manually
 julius raw <command>      # escape hatch: run with no filtering
 ```
 
 ## Custom filters
 
-Drop project-specific filters in `.julius/filters.toml` — same declarative format as the [built-in catalog](internal/filter/builtin/), documented in [docs/filters.md](docs/filters.md). Filters are regex pipelines with inline tests; the engine enforces the never-larger guarantee on top of whatever you write.
+Drop project-specific filters in `.julius/filters.toml` — same declarative format as the [built-in catalog](internal/filter/builtin/), documented in [docs/filters.md](docs/filters.md). Filters are regex pipelines with inline tests; run them with `julius filters test` (non-zero exit on failure, CI-friendly), and the engine enforces the never-larger guarantee on top of whatever you write.
 
 ## Scope, honestly
 

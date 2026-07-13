@@ -17,12 +17,10 @@ func TestBuiltinSpecs(t *testing.T) {
 			t.Errorf("builtin filter %q has no inline tests", s.Name())
 			continue
 		}
-		for _, tc := range s.Tests {
-			t.Run(s.Name()+"/"+tc.Name, func(t *testing.T) {
-				got := Finalize(tc.Input, s.Apply(tc.Input, tc.ExitCode))
-				want := strings.TrimRight(tc.Want, "\n")
-				if strings.TrimRight(got.Output, "\n") != want {
-					t.Errorf("output mismatch\n--- got ---\n%s\n--- want ---\n%s", got.Output, want)
+		for _, res := range s.RunTests() {
+			t.Run(res.Filter+"/"+res.Test, func(t *testing.T) {
+				if !res.Pass {
+					t.Errorf("output mismatch\n--- got ---\n%s\n--- want ---\n%s", res.Got, res.Want)
 				}
 			})
 		}
