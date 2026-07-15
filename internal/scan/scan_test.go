@@ -114,6 +114,35 @@ func TestScanBypassForms(t *testing.T) {
 	}
 }
 
+func TestScanChainAttribution(t *testing.T) {
+	dir := t.TempDir()
+	lines := []string{
+		// chain output belongs to the command that produced it, not the leading cd
+		useLine("t1", "cd /tmp/proj && ./server --check"),
+		resultLine("t1", strings.Repeat("listening on :8080 request served in 12ms\n", 40)),
+		// a chain of only silent builtins falls back to plain attribution
+		useLine("t2", "cd /tmp/proj && export FOO=1"),
+		resultLine("t2", "unexpected output"),
+	}
+	if err := os.WriteFile(filepath.Join(dir, "s1.jsonl"), []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Dir(dir, time.Now().Add(-time.Hour), filter.Load(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Candidates) != 2 {
+		t.Fatalf("candidates = %+v, want 2", rep.Candidates)
+	}
+	if rep.Candidates[0].Family != "server" {
+		t.Errorf("chain family = %q, want %q (attributed past the cd)", rep.Candidates[0].Family, "server")
+	}
+	if rep.Candidates[1].Family != "cd /tmp/proj" {
+		t.Errorf("all-silent chain family = %q, want %q", rep.Candidates[1].Family, "cd /tmp/proj")
+	}
+}
+
 func TestScanWindowFilter(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "old.jsonl")

@@ -236,9 +236,19 @@ func classify(cmd, stdout string, reg *filter.Registry, rep *Report, missed map[
 }
 
 // family reduces a command line to a rankable family name, e.g.
-// "kubectl get pods -A" → "kubectl get".
+// "kubectl get pods -A" → "kubectl get". A chain's output is attributed
+// to its first segment that can produce output: in `cd /tmp && ./run.sh`
+// the recorded stdout came from ./run.sh, not cd.
 func family(cmd string) string {
-	fields := strings.Fields(router.MatchTarget(cmd))
+	seg := cmd
+	for _, p := range router.SplitChain(cmd) {
+		if p.Text == "" || silentBuiltin(router.MatchTarget(p.Text)) {
+			continue
+		}
+		seg = p.Text
+		break
+	}
+	fields := strings.Fields(router.MatchTarget(seg))
 	if len(fields) == 0 {
 		return "(empty)"
 	}
@@ -246,4 +256,18 @@ func family(cmd string) string {
 		return fields[0] + " " + fields[1]
 	}
 	return fields[0]
+}
+
+// silentBuiltin reports whether a reduced segment is a shell builtin that
+// prints nothing on success, so it cannot be the source of recorded output.
+func silentBuiltin(target string) bool {
+	fields := strings.Fields(target)
+	if len(fields) == 0 {
+		return true
+	}
+	switch fields[0] {
+	case "cd", "export", "unset", "true", ":":
+		return true
+	}
+	return false
 }
