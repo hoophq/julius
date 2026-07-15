@@ -133,4 +133,4 @@ Drop project-specific filters in `.julius/filters.toml` — same declarative for
 
 ## License
 
-MIT © [hoop.dev](https://hoop.dev) — built by the team behind [hoop.dev](https://hoop.dev).
+MIT © [hoop.dev](https://hoop.dev/start?utm_source=julius&utm_medium=github&utm_campaign=att-launch-072026) — built by the team behind [hoop.dev](https://hoop.dev/start?utm_source=julius&utm_medium=github&utm_campaign=att-launch-072026).
