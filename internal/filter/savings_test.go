@@ -144,6 +144,29 @@ func buildCorpus() []corpusCase {
 		fmt.Fprintf(&ocGet, "pod-%03d-5c8b7d6f4-p9q%d  1/1     Running   %d          5h\n", i, i%10, i%4)
 	}
 
+	var ec2 strings.Builder
+	ec2.WriteString("{\n    \"Reservations\": [\n")
+	for i := 0; i < 15; i++ {
+		fmt.Fprintf(&ec2, "        {\n            \"Instances\": [\n                {\n                    \"InstanceId\": \"i-0abc%012d\",\n                    \"InstanceType\": \"t3.medium\",\n                    \"State\": { \"Code\": 16, \"Name\": \"running\" },\n", i)
+		for j := 0; j < 80; j++ {
+			fmt.Fprintf(&ec2, "                    \"Detail%02d\": \"value-%d-%d\",\n", j, i, j)
+		}
+		ec2.WriteString("                    \"Hypervisor\": \"nitro\"\n                }\n            ]\n        },\n")
+	}
+	ec2.WriteString("    ]\n}\n")
+
+	var awsLogs strings.Builder
+	awsLogs.WriteString("{\n    \"events\": [\n")
+	for i := 0; i < 400; i++ {
+		fmt.Fprintf(&awsLogs, "        {\n            \"timestamp\": 17526%06d,\n            \"message\": \"GET /api/items/%d 200 in %dms\",\n            \"ingestionTime\": 17526%06d\n        },\n", i, i, i%90+3, i+450)
+	}
+	awsLogs.WriteString("    ],\n    \"nextForwardToken\": \"f/383912345678901234567890\"\n}\n")
+
+	var s3ls strings.Builder
+	for i := 0; i < 300; i++ {
+		fmt.Fprintf(&s3ls, "2026-07-%02d 12:%02d:%02d    %8d backups/db-part-%04d.tar.gz\n", i%28+1, i%60, i%60, i*4096+1024, i)
+	}
+
 	return []corpusCase{
 		{"go test ./...", goTest.String(), 85},
 		{"pytest", pytest.String(), 75},
@@ -166,6 +189,9 @@ func buildCorpus() []corpusCase {
 		{"diff -u a/config.yaml b/config.yaml", pdiff.String(), 65},
 		{"docker ps -a", dps.String(), 50},
 		{"oc get pods", ocGet.String(), 60},
+		{"aws ec2 describe-instances", ec2.String(), 75},
+		{"aws logs get-log-events --log-group-name app", awsLogs.String(), 70},
+		{"aws s3 ls s3://backups --recursive", s3ls.String(), 55},
 	}
 }
 

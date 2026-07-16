@@ -84,14 +84,14 @@ commands = [
   { cmd = "pnpm list", category = "packages", status = "planned", ref = "ATR-141" },
 
   # cloud
-  { cmd = "aws sts get-caller-identity", category = "cloud", status = "planned", ref = "ATR-139" },
-  { cmd = "aws ec2 describe-instances", category = "cloud", status = "planned", ref = "ATR-139" },
-  { cmd = "aws lambda list-functions", category = "cloud", status = "planned", ref = "ATR-139" },
-  { cmd = "aws logs get-log-events --log-group-name app", category = "cloud", status = "planned", ref = "ATR-139" },
-  { cmd = "aws cloudformation describe-stack-events --stack-name app", category = "cloud", status = "planned", ref = "ATR-139" },
-  { cmd = "aws dynamodb scan --table-name users", category = "cloud", status = "planned", ref = "ATR-139" },
-  { cmd = "aws iam list-roles", category = "cloud", status = "planned", ref = "ATR-139" },
-  { cmd = "aws s3 ls s3://bucket", category = "cloud", status = "planned", ref = "ATR-139" },
+  { cmd = "aws sts get-caller-identity", category = "cloud", filter = "aws-sts" },
+  { cmd = "aws ec2 describe-instances", category = "cloud", filter = "aws-ec2" },
+  { cmd = "aws lambda list-functions", category = "cloud", filter = "aws-lambda" },
+  { cmd = "aws logs get-log-events --log-group-name app", category = "cloud", filter = "aws-logs" },
+  { cmd = "aws cloudformation describe-stack-events --stack-name app", category = "cloud", filter = "aws-cloudformation" },
+  { cmd = "aws dynamodb scan --table-name users", category = "cloud", filter = "aws-dynamodb" },
+  { cmd = "aws iam list-roles", category = "cloud", filter = "aws-iam" },
+  { cmd = "aws s3 ls s3://bucket", category = "cloud", filter = "aws-s3" },
 
   # containers
   { cmd = "docker logs app", category = "containers", filter = "docker-logs" },
