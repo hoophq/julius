@@ -132,6 +132,18 @@ func buildCorpus() []corpusCase {
 		fmt.Fprintf(&pdiff, "@@ -%d,3 +%d,3 @@\n key_%03d: stable\n-value_%03d: old\n+value_%03d: new\n", i*4+1, i*4+1, i, i, i)
 	}
 
+	var dps strings.Builder
+	dps.WriteString("CONTAINER ID   IMAGE          COMMAND                  CREATED      STATUS      PORTS                    NAMES\n")
+	for i := 0; i < 150; i++ {
+		fmt.Fprintf(&dps, "%012x   svc-%03d:1.2    \"/entrypoint.sh run\"     2 days ago   Up 2 days   0.0.0.0:%d->8080/tcp   svc-%03d\n", i*7919, i, 30000+i, i)
+	}
+
+	var ocGet strings.Builder
+	ocGet.WriteString("NAME                     READY   STATUS    RESTARTS   AGE\n")
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&ocGet, "pod-%03d-5c8b7d6f4-p9q%d  1/1     Running   %d          5h\n", i, i%10, i%4)
+	}
+
 	return []corpusCase{
 		{"go test ./...", goTest.String(), 85},
 		{"pytest", pytest.String(), 75},
@@ -152,6 +164,8 @@ func buildCorpus() []corpusCase {
 		{"tree internal/", tree.String(), 60},
 		{"rg 'err !=' internal/", rg.String(), 55},
 		{"diff -u a/config.yaml b/config.yaml", pdiff.String(), 65},
+		{"docker ps -a", dps.String(), 50},
+		{"oc get pods", ocGet.String(), 60},
 	}
 }
 

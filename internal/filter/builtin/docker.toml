@@ -58,6 +58,61 @@ want = """
 ERROR: failed to solve: process did not complete successfully
 """
 
+# docker ps/images — state tables are dense already; cap runaway lists
+# (same treatment as kubectl get).
+[filters.docker-ps]
+description = "docker ps/images: capped table"
+command = '^docker\s+(ps|images)\b'
+strip_ansi = true
+head = 60
+
+[[filters.docker-ps.tests]]
+name = "short container table unchanged"
+input = """
+CONTAINER ID   IMAGE          COMMAND                  CREATED      STATUS      PORTS                    NAMES
+f3a91c04b21d   redis:7        "docker-entrypoint.s…"   2 days ago   Up 2 days   6379/tcp                 cache
+9e2d7b8a5c1f   postgres:16    "docker-entrypoint.s…"   2 days ago   Up 2 days   0.0.0.0:5432->5432/tcp   db
+"""
+want = """
+CONTAINER ID   IMAGE          COMMAND                  CREATED      STATUS      PORTS                    NAMES
+f3a91c04b21d   redis:7        "docker-entrypoint.s…"   2 days ago   Up 2 days   6379/tcp                 cache
+9e2d7b8a5c1f   postgres:16    "docker-entrypoint.s…"   2 days ago   Up 2 days   0.0.0.0:5432->5432/tcp   db
+"""
+
+[[filters.docker-ps.tests]]
+name = "short image table unchanged"
+input = """
+REPOSITORY   TAG       IMAGE ID       CREATED       SIZE
+redis        7         e40e2763392d   3 weeks ago   117MB
+postgres     16        f1b7679b1c0d   3 weeks ago   431MB
+"""
+want = """
+REPOSITORY   TAG       IMAGE ID       CREATED       SIZE
+redis        7         e40e2763392d   3 weeks ago   117MB
+postgres     16        f1b7679b1c0d   3 weeks ago   431MB
+"""
+
+# docker compose ps — same table treatment; matches v2 (docker compose)
+# and v1 (docker-compose).
+[filters.docker-compose-ps]
+description = "docker compose ps: capped table"
+command = '^docker(-|\s+)compose\s+ps\b'
+strip_ansi = true
+head = 60
+
+[[filters.docker-compose-ps.tests]]
+name = "short service table unchanged"
+input = """
+NAME       IMAGE         COMMAND                  SERVICE   CREATED      STATUS      PORTS
+app-web-1  app-web       "gunicorn app:server"    web       2 days ago   Up 2 days   0.0.0.0:8000->8000/tcp
+app-db-1   postgres:16   "docker-entrypoint.s…"   db        2 days ago   Up 2 days   5432/tcp
+"""
+want = """
+NAME       IMAGE         COMMAND                  SERVICE   CREATED      STATUS      PORTS
+app-web-1  app-web       "gunicorn app:server"    web       2 days ago   Up 2 days   0.0.0.0:8000->8000/tcp
+app-db-1   postgres:16   "docker-entrypoint.s…"   db        2 days ago   Up 2 days   5432/tcp
+"""
+
 # docker logs — recent tail; full history is rarely what an agent needs.
 [filters.docker-logs]
 description = "docker logs: last 100 lines"

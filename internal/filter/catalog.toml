@@ -102,11 +102,11 @@ commands = [
   { cmd = "kubectl get services", category = "containers", filter = "kubectl-get" },
   { cmd = "kubectl describe pod api-0", category = "containers", filter = "kubectl-describe" },
   { cmd = "kubectl logs api-0", category = "containers", filter = "kubectl-logs" },
-  { cmd = "docker ps -a", category = "containers", status = "planned", ref = "ATR-138" },
-  { cmd = "docker images", category = "containers", status = "planned", ref = "ATR-138" },
-  { cmd = "docker compose ps", category = "containers", status = "planned", ref = "ATR-138" },
-  { cmd = "oc get pods", category = "containers", status = "planned", ref = "ATR-138" },
-  { cmd = "oc logs api-0", category = "containers", status = "planned", ref = "ATR-138" },
+  { cmd = "docker ps -a", category = "containers", filter = "docker-ps" },
+  { cmd = "docker images", category = "containers", filter = "docker-ps" },
+  { cmd = "docker compose ps", category = "containers", filter = "docker-compose-ps" },
+  { cmd = "oc get pods", category = "containers", filter = "kubectl-get" },
+  { cmd = "oc logs api-0", category = "containers", filter = "kubectl-logs" },
 
   # iac
   { cmd = "terraform plan", category = "iac", filter = "terraform-plan" },
