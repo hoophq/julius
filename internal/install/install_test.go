@@ -13,7 +13,7 @@ func TestInitIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
 
-	if err := Init(false, PatchAuto, dir, strings.NewReader(""), &out); err != nil {
+	if err := Init(false, PatchAuto, false, dir, strings.NewReader(""), &out); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, ".claude", "settings.json")
@@ -23,7 +23,7 @@ func TestInitIsIdempotent(t *testing.T) {
 	}
 
 	// second run must change nothing
-	if err := Init(false, PatchAuto, dir, strings.NewReader(""), &out); err != nil {
+	if err := Init(false, PatchAuto, false, dir, strings.NewReader(""), &out); err != nil {
 		t.Fatal(err)
 	}
 	second, err := os.ReadFile(path)
@@ -60,7 +60,7 @@ func TestInitPreservesExistingSettings(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := Init(false, PatchAuto, dir, strings.NewReader(""), &out); err != nil {
+	if err := Init(false, PatchAuto, false, dir, strings.NewReader(""), &out); err != nil {
 		t.Fatal(err)
 	}
 
@@ -84,10 +84,48 @@ func TestInitPreservesExistingSettings(t *testing.T) {
 	}
 }
 
+func TestInitMCPUpgradesMatcherInPlace(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+
+	if err := Init(false, PatchAuto, false, dir, strings.NewReader(""), &out); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ".claude", "settings.json")
+
+	// --mcp on a base install upgrades the matcher without duplicating hooks
+	if err := Init(false, PatchAuto, true, dir, strings.NewReader(""), &out); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	if !strings.Contains(s, PostHookMatcherMCP) {
+		t.Errorf("matcher not upgraded to MCP variant:\n%s", s)
+	}
+	if got := strings.Count(s, PostHookCommand); got != 1 {
+		t.Errorf("post hook registered %d times after upgrade, want exactly 1", got)
+	}
+
+	// a plain re-run must never downgrade the MCP matcher
+	if err := Init(false, PatchAuto, false, dir, strings.NewReader(""), &out); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(after), PostHookMatcherMCP) {
+		t.Errorf("plain init downgraded the MCP matcher:\n%s", after)
+	}
+}
+
 func TestInitSkipModePrintsInstructions(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
-	if err := Init(false, PatchSkip, dir, strings.NewReader(""), &out); err != nil {
+	if err := Init(false, PatchSkip, false, dir, strings.NewReader(""), &out); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); !os.IsNotExist(err) {

@@ -23,6 +23,12 @@ const PostHookCommand = "julius hook claude-post"
 // reads — fresh file content is never rewritten.
 const PostHookMatcher = "Bash|Grep|Glob|Read"
 
+// PostHookMatcherMCP additionally routes MCP tool results through the post
+// hook (opt-in via `julius init --mcp`). Opt-in because compressing an
+// unfamiliar server's output is riskier than the native tools' known
+// shapes; the hook still refuses to touch errors and non-JSON payloads.
+const PostHookMatcherMCP = PostHookMatcher + "|mcp__.*"
+
 // PatchMode controls whether Init modifies settings without asking.
 type PatchMode int
 
@@ -50,8 +56,13 @@ func SettingsPath(global bool, cwd string) (string, error) {
 // Installed reports whether BOTH julius hooks are registered in the given
 // settings file with the current matcher. Partial or outdated installs
 // (missing post hook, stale matcher) report false so Init upgrades them
-// in place.
+// in place. The base matcher is a substring of the MCP variant, so an
+// MCP-extended install passes this check too.
 func Installed(path string) bool {
+	return installedWith(path, PostHookMatcher)
+}
+
+func installedWith(path, matcher string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
@@ -59,28 +70,35 @@ func Installed(path string) bool {
 	s := string(data)
 	return strings.Contains(s, HookCommand) &&
 		strings.Contains(s, PostHookCommand) &&
-		strings.Contains(s, PostHookMatcher)
+		strings.Contains(s, matcher)
 }
 
-// Init registers the julius PreToolUse hook in Claude Code settings.
-func Init(global bool, mode PatchMode, cwd string, stdin io.Reader, stdout io.Writer) error {
+// Init registers the julius hooks in Claude Code settings. With mcp, the
+// PostToolUse matcher also covers MCP tools; running with mcp on an
+// existing base install upgrades the matcher in place, and a plain re-run
+// never downgrades an MCP-extended one (substring check).
+func Init(global bool, mode PatchMode, mcp bool, cwd string, stdin io.Reader, stdout io.Writer) error {
 	path, err := SettingsPath(global, cwd)
 	if err != nil {
 		return err
 	}
+	matcher := PostHookMatcher
+	if mcp {
+		matcher = PostHookMatcherMCP
+	}
 
-	if Installed(path) {
+	if installedWith(path, matcher) {
 		fmt.Fprintf(stdout, "julius hook already installed in %s\n", path)
 		return nil
 	}
 
 	if mode == PatchSkip {
-		printManual(stdout, path)
+		printManual(stdout, path, matcher)
 		return nil
 	}
 	if mode == PatchAsk {
 		if !isTerminal(os.Stdin) {
-			printManual(stdout, path)
+			printManual(stdout, path, matcher)
 			fmt.Fprintln(stdout, "\n(non-interactive session: re-run with --auto-patch to apply)")
 			return nil
 		}
@@ -93,7 +111,7 @@ func Init(global bool, mode PatchMode, cwd string, stdin io.Reader, stdout io.Wr
 		}
 	}
 
-	if err := patchSettings(path); err != nil {
+	if err := patchSettings(path, matcher); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "julius hook registered in %s\nRestart Claude Code (or start a new session) to activate it.\n", path)
@@ -102,7 +120,7 @@ func Init(global bool, mode PatchMode, cwd string, stdin io.Reader, stdout io.Wr
 
 // patchSettings appends the julius hook to hooks.PreToolUse, preserving
 // every other field in the file. Atomic write with a .bak backup.
-func patchSettings(path string) error {
+func patchSettings(path, postMatcher string) error {
 	settings := map[string]any{}
 	original, err := os.ReadFile(path)
 	switch {
@@ -121,7 +139,7 @@ func patchSettings(path string) error {
 		hooks = map[string]any{}
 	}
 	ensureHook(hooks, "PreToolUse", "Bash", HookCommand)
-	ensureHook(hooks, "PostToolUse", PostHookMatcher, PostHookCommand)
+	ensureHook(hooks, "PostToolUse", postMatcher, PostHookCommand)
 	settings["hooks"] = hooks
 
 	out, err := json.MarshalIndent(settings, "", "  ")
@@ -171,7 +189,7 @@ func ensureHook(hooks map[string]any, event, matcher, command string) {
 	hooks[event] = entries
 }
 
-func printManual(w io.Writer, path string) {
+func printManual(w io.Writer, path, postMatcher string) {
 	fmt.Fprintf(w, `Add this to %s under "hooks":
 
   "PreToolUse": [
@@ -186,7 +204,7 @@ func printManual(w io.Writer, path string) {
       "hooks": [{ "type": "command", "command": "%s" }]
     }
   ]
-`, path, HookCommand, PostHookMatcher, PostHookCommand)
+`, path, HookCommand, postMatcher, PostHookCommand)
 }
 
 func isTerminal(f *os.File) bool {
