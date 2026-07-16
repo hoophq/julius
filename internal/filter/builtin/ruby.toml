@@ -1,0 +1,202 @@
+# Ruby ecosystem. Test runners mirror pytest (failures and summary survive,
+# progress noise dropped), rubocop mirrors ruff, bundler mirrors pip.
+# Patterns cover the common variants: bundle exec <tool>, rails test,
+# bundle update.
+
+# rspec — failures and the summary lines; progress dots dropped. Default
+# progress format is already terse; the savings are in failure-heavy runs.
+[filters.rspec]
+description = "rspec: failures and summary only"
+command = '(^|\s)rspec\b|^(bundle\s+exec\s+)?bin/rspec\b'
+strip_ansi = true
+drop_lines = [
+  '^Randomized with seed \d+',
+  '^Run options:',
+  '^[.F*]+$',
+  '^\s*$',
+]
+if_empty = "rspec: ok"
+
+[[filters.rspec.tests]]
+name = "passing run collapses to summary"
+input = """
+Randomized with seed 44823
+................................................
+
+Finished in 0.52 seconds (files took 1.21 seconds to load)
+48 examples, 0 failures
+"""
+want = """
+Finished in 0.52 seconds (files took 1.21 seconds to load)
+48 examples, 0 failures
+"""
+
+[[filters.rspec.tests]]
+name = "failures kept"
+exit_code = 1
+input = """
+Failures:
+
+  1) Api returns all items
+     Failure/Error: expect(items.size).to eq(3)
+
+       expected: 3
+            got: 2
+
+     # ./spec/api_spec.rb:12:in `block (2 levels) in <top (required)>'
+
+Finished in 0.31 seconds (files took 0.94 seconds to load)
+5 examples, 1 failure
+
+Failed examples:
+
+rspec ./spec/api_spec.rb:8 # Api returns all items
+"""
+want = """
+Failures:
+  1) Api returns all items
+     Failure/Error: expect(items.size).to eq(3)
+       expected: 3
+            got: 2
+     # ./spec/api_spec.rb:12:in `block (2 levels) in <top (required)>'
+Finished in 0.31 seconds (files took 0.94 seconds to load)
+5 examples, 1 failure
+Failed examples:
+rspec ./spec/api_spec.rb:8 # Api returns all items
+"""
+
+# rake test / rails test — minitest: verdict and failures survive.
+[filters.rake-test]
+description = "rake/rails test: failures and summary only"
+command = '^(bundle\s+exec\s+)?rake\s+(test|spec)\b|^(bundle\s+exec\s+)?(bin/)?rails\s+t(est)?\b'
+strip_ansi = true
+drop_lines = [
+  '^Run options:',
+  '^# Running:',
+  '^[.SFE]+$',
+  '^\s*$',
+]
+if_empty = "rake test: ok"
+
+[[filters.rake-test.tests]]
+name = "passing run collapses to summary"
+input = """
+Run options: --seed 12345
+
+# Running:
+
+................................................
+
+Finished in 1.98s, 24.24 runs/s, 48.48 assertions/s.
+
+48 runs, 96 assertions, 0 failures, 0 errors, 0 skips
+"""
+want = """
+Finished in 1.98s, 24.24 runs/s, 48.48 assertions/s.
+48 runs, 96 assertions, 0 failures, 0 errors, 0 skips
+"""
+
+[[filters.rake-test.tests]]
+name = "failure detail kept"
+exit_code = 1
+input = """
+Run options: --seed 4711
+
+# Running:
+
+.F.
+
+Failure:
+ApiTest#test_returns_items [test/api_test.rb:12]:
+Expected: 3
+  Actual: 2
+
+48 runs, 96 assertions, 1 failures, 0 errors, 0 skips
+"""
+want = """
+Failure:
+ApiTest#test_returns_items [test/api_test.rb:12]:
+Expected: 3
+  Actual: 2
+48 runs, 96 assertions, 1 failures, 0 errors, 0 skips
+"""
+
+# rubocop — offenses and the verdict; inspection progress dropped.
+[filters.rubocop]
+description = "rubocop: offenses and summary only"
+command = '(^|\s)rubocop\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^Inspecting \d+ files',
+  '^[.CWEF]+$',
+  '^\s*$',
+]
+if_empty = "rubocop: clean"
+
+[[filters.rubocop.tests]]
+name = "clean run keeps the verdict"
+input = """
+Inspecting 45 files
+.............................................
+
+45 files inspected, no offenses detected
+"""
+want = "45 files inspected, no offenses detected"
+
+[[filters.rubocop.tests]]
+name = "offenses kept"
+exit_code = 1
+input = """
+Inspecting 45 files
+.....C.......................................
+
+Offenses:
+
+app/models/user.rb:14:3: C: Style/GuardClause: Use a guard clause instead of wrapping the code inside a conditional expression.
+
+45 files inspected, 1 offense detected
+"""
+want = """
+Offenses:
+app/models/user.rb:14:3: C: Style/GuardClause: Use a guard clause instead of wrapping the code inside a conditional expression.
+45 files inspected, 1 offense detected
+"""
+
+# bundle install/update — outcome only; per-gem chatter is pure noise.
+[filters.bundle-install]
+description = "bundle install: outcome only"
+command = '^bundler?\s+(install|update)\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^Fetching ',
+  '^Installing ',
+  '^Using ',
+  '^Resolving dependencies',
+  '^Use `bundle info',
+  '^\s*$',
+]
+if_empty = "bundle install: ok"
+
+[[filters.bundle-install.tests]]
+name = "gem chatter dropped, outcome kept"
+input = """
+Fetching gem metadata from https://rubygems.org/.........
+Resolving dependencies...
+Using rake 13.2.1
+Fetching rspec-core 3.13.0
+Installing rspec-core 3.13.0
+Bundle complete! 24 Gemfile dependencies, 156 gems now installed.
+Use `bundle info [gemname]` to see where a bundled gem is installed.
+"""
+want = "Bundle complete! 24 Gemfile dependencies, 156 gems now installed."
+
+[[filters.bundle-install.tests]]
+name = "errors survive"
+exit_code = 7
+input = """
+Fetching gem metadata from https://rubygems.org/.........
+Could not find gem 'nonexistent-gem-xyz' in rubygems repository https://rubygems.org/ or installed locally.
+"""
+want = "Could not find gem 'nonexistent-gem-xyz' in rubygems repository https://rubygems.org/ or installed locally."
