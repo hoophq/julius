@@ -1,9 +1,21 @@
-# kubectl get — resource tables are dense already; cap runaway lists.
+# kubectl/oc get — resource tables are dense already; cap runaway lists.
+# oc (OpenShift) mirrors kubectl syntax, so the same filters cover both.
 [filters.kubectl-get]
-description = "kubectl get: capped resource list"
-command = '^kubectl\s+get\b'
+description = "kubectl/oc get: capped resource list"
+command = '^(kubectl|oc)\s+get\b'
 strip_ansi = true
 head = 60
+
+[[filters.kubectl-get.tests]]
+name = "oc resource table unchanged"
+input = """
+NAME                     READY   STATUS    RESTARTS   AGE
+frontend-5c8b7d6f4-p9q1  1/1     Running   0          5h
+"""
+want = """
+NAME                     READY   STATUS    RESTARTS   AGE
+frontend-5c8b7d6f4-p9q1  1/1     Running   0          5h
+"""
 
 [[filters.kubectl-get.tests]]
 name = "short table unchanged"
@@ -18,12 +30,12 @@ api-7d4b9c6f8-x2m4p      1/1     Running   0          2d
 worker-6f9d8b7c5-k8s2j   1/1     Running   3          2d
 """
 
-# kubectl describe — drop placeholder-only noise, keep everything real.
+# kubectl/oc describe — drop placeholder-only noise, keep everything real.
 # Note: values are passed through untouched, never summarized — julius adds
 # no new exposure beyond what the command already prints.
 [filters.kubectl-describe]
-description = "kubectl describe: placeholder noise removed"
-command = '^kubectl\s+describe\b'
+description = "kubectl/oc describe: placeholder noise removed"
+command = '^(kubectl|oc)\s+describe\b'
 strip_ansi = true
 drop_lines = [
   '^\S+:\s+<none>$',
@@ -52,10 +64,10 @@ Status:       Running
 IP:           10.1.0.14
 """
 
-# kubectl logs — recent tail, like docker logs.
+# kubectl/oc logs — recent tail, like docker logs.
 [filters.kubectl-logs]
-description = "kubectl logs: last 100 lines"
-command = '^kubectl\s+logs\b'
+description = "kubectl/oc logs: last 100 lines"
+command = '^(kubectl|oc)\s+logs\b'
 strip_ansi = true
 merge_stderr = true
 tail = 100
