@@ -1,0 +1,297 @@
+# AWS CLI — verbose JSON state output, bounded honestly. Conservative by
+# design: caps with the engine's omission marker, plus surgical drops of
+# unambiguous noise only. Values are passed through untouched, never
+# summarized or reformatted — julius adds no new exposure beyond what the
+# command already prints, and never silently hides fields inside the cap
+# window. AWS CLI errors go to stderr, which passes through untouched.
+
+# sts get-caller-identity — tiny already; bounded for coverage.
+[filters.aws-sts]
+description = "aws sts get-caller-identity: bounded"
+command = '^aws\s+sts\s+get-caller-identity\b'
+strip_ansi = true
+head = 20
+
+[[filters.aws-sts.tests]]
+name = "identity unchanged"
+input = """
+{
+    "UserId": "AIDAEXAMPLE7EXAMPLE",
+    "Account": "123456789012",
+    "Arn": "arn:aws:iam::123456789012:user/deploy-bot"
+}
+"""
+want = """
+{
+    "UserId": "AIDAEXAMPLE7EXAMPLE",
+    "Account": "123456789012",
+    "Arn": "arn:aws:iam::123456789012:user/deploy-bot"
+}
+"""
+
+# ec2 describe-* — instance JSON runs to hundreds of lines per instance.
+[filters.aws-ec2]
+description = "aws ec2 describe-*: capped JSON"
+command = '^aws\s+ec2\s+describe-\w+'
+strip_ansi = true
+head = 200
+
+[[filters.aws-ec2.tests]]
+name = "short describe unchanged"
+input = """
+{
+    "Reservations": [
+        {
+            "Instances": [
+                {
+                    "InstanceId": "i-0abc12345def67890",
+                    "InstanceType": "t3.medium",
+                    "State": {
+                        "Code": 16,
+                        "Name": "running"
+                    }
+                }
+            ]
+        }
+    ]
+}
+"""
+want = """
+{
+    "Reservations": [
+        {
+            "Instances": [
+                {
+                    "InstanceId": "i-0abc12345def67890",
+                    "InstanceType": "t3.medium",
+                    "State": {
+                        "Code": 16,
+                        "Name": "running"
+                    }
+                }
+            ]
+        }
+    ]
+}
+"""
+
+# lambda list-* — bounded function lists.
+[filters.aws-lambda]
+description = "aws lambda list-*: capped JSON"
+command = '^aws\s+lambda\s+list-\w+'
+strip_ansi = true
+head = 200
+
+[[filters.aws-lambda.tests]]
+name = "short function list unchanged"
+input = """
+{
+    "Functions": [
+        {
+            "FunctionName": "ingest-worker",
+            "Runtime": "python3.12",
+            "MemorySize": 512
+        }
+    ]
+}
+"""
+want = """
+{
+    "Functions": [
+        {
+            "FunctionName": "ingest-worker",
+            "Runtime": "python3.12",
+            "MemorySize": 512
+        }
+    ]
+}
+"""
+
+# logs get-log-events / filter-log-events / tail — the message lines are
+# the payload. ingestionTime (when CloudWatch received the line) and
+# eventId are metadata noise; event timestamps are kept. The drop patterns
+# require the trailing comma so only non-terminal fields are removed — a
+# metadata line that closes its object is kept, and the JSON stays
+# well-formed. tail keeps the newest events plus the paging tokens the
+# CLI prints at the end.
+[filters.aws-logs]
+description = "aws logs events: metadata noise dropped, newest kept"
+command = '^aws\s+logs\s+(get-log-events|filter-log-events|tail)\b'
+strip_ansi = true
+drop_lines = [
+  '^\s*"ingestionTime":\s*\d+,$',
+  '^\s*"eventId":\s*"\d+",$',
+]
+tail = 300
+
+[[filters.aws-logs.tests]]
+name = "non-terminal metadata dropped, JSON stays valid"
+input = """
+{
+    "events": [
+        {
+            "timestamp": 1752678000000,
+            "message": "worker started",
+            "ingestionTime": 1752678000450,
+            "eventId": "38391234567890123456789012"
+        }
+    ]
+}
+"""
+want = """
+{
+    "events": [
+        {
+            "timestamp": 1752678000000,
+            "message": "worker started",
+            "eventId": "38391234567890123456789012"
+        }
+    ]
+}
+"""
+
+[[filters.aws-logs.tests]]
+name = "terminal metadata kept, no dangling comma"
+input = """
+{
+    "events": [
+        {
+            "timestamp": 1752678000000,
+            "message": "worker started",
+            "ingestionTime": 1752678000450
+        }
+    ],
+    "nextForwardToken": "f/38391234567890123456789012345678901234567890123456789012"
+}
+"""
+want = """
+{
+    "events": [
+        {
+            "timestamp": 1752678000000,
+            "message": "worker started",
+            "ingestionTime": 1752678000450
+        }
+    ],
+    "nextForwardToken": "f/38391234567890123456789012345678901234567890123456789012"
+}
+"""
+
+# cloudformation describe-stack-events — newest events come first, so a
+# head cap keeps the most recent activity; failures live in the data and
+# are passed through untouched.
+[filters.aws-cloudformation]
+description = "aws cloudformation stack events: capped, newest kept"
+command = '^aws\s+cloudformation\s+describe-stack-events\b'
+strip_ansi = true
+head = 200
+
+[[filters.aws-cloudformation.tests]]
+name = "short event list unchanged"
+input = """
+{
+    "StackEvents": [
+        {
+            "LogicalResourceId": "AppBucket",
+            "ResourceStatus": "CREATE_FAILED",
+            "ResourceStatusReason": "mybucket already exists"
+        }
+    ]
+}
+"""
+want = """
+{
+    "StackEvents": [
+        {
+            "LogicalResourceId": "AppBucket",
+            "ResourceStatus": "CREATE_FAILED",
+            "ResourceStatusReason": "mybucket already exists"
+        }
+    ]
+}
+"""
+
+# dynamodb scan/query — items are data, never dropped selectively; a tail
+# cap bounds runaway scans while keeping the Count/ScannedCount trailer.
+[filters.aws-dynamodb]
+description = "aws dynamodb scan/query: capped, count trailer kept"
+command = '^aws\s+dynamodb\s+(scan|query)\b'
+strip_ansi = true
+tail = 200
+
+[[filters.aws-dynamodb.tests]]
+name = "short scan unchanged"
+input = """
+{
+    "Items": [
+        {
+            "id": {
+                "S": "user-001"
+            }
+        }
+    ],
+    "Count": 1,
+    "ScannedCount": 1
+}
+"""
+want = """
+{
+    "Items": [
+        {
+            "id": {
+                "S": "user-001"
+            }
+        }
+    ],
+    "Count": 1,
+    "ScannedCount": 1
+}
+"""
+
+# iam list-* — bounded role/policy/user lists.
+[filters.aws-iam]
+description = "aws iam list-*: capped JSON"
+command = '^aws\s+iam\s+list-\w+'
+strip_ansi = true
+head = 200
+
+[[filters.aws-iam.tests]]
+name = "short role list unchanged"
+input = """
+{
+    "Roles": [
+        {
+            "RoleName": "app-role",
+            "Arn": "arn:aws:iam::123456789012:role/app-role"
+        }
+    ]
+}
+"""
+want = """
+{
+    "Roles": [
+        {
+            "RoleName": "app-role",
+            "Arn": "arn:aws:iam::123456789012:role/app-role"
+        }
+    ]
+}
+"""
+
+# s3 ls — plain listing lines; same cap family as ls/find.
+[filters.aws-s3]
+description = "aws s3 ls: capped listing"
+command = '^aws\s+s3\s+ls\b'
+strip_ansi = true
+head = 100
+
+[[filters.aws-s3.tests]]
+name = "short listing unchanged"
+input = """
+2026-07-10 12:01:33    1048576 backups/db-2026-07-10.tar.gz
+2026-07-11 12:01:41    1049003 backups/db-2026-07-11.tar.gz
+"""
+want = """
+2026-07-10 12:01:33    1048576 backups/db-2026-07-10.tar.gz
+2026-07-11 12:01:41    1049003 backups/db-2026-07-11.tar.gz
+"""
