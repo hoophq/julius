@@ -1,0 +1,127 @@
+# Target command catalog: the dev commands julius aims to cover with builtin
+# filters, and the honest state of each row. Enforced by TestCatalogCoverage
+# (catalog_test.go), which fails when a row drifts from reality:
+#
+#   filter = "<name>"      the command must resolve to exactly that builtin
+#                          filter via Registry.Pick
+#   status = "planned"     no builtin may match yet; ref = tracking issue
+#   status = "wont-cover"  no builtin may match; reason = why not
+#
+# Every builtin filter must also appear in at least one covered row, so a new
+# filter registers here in the same PR that adds it. Coverage % (covered over
+# covered+planned, per category and overall) is logged by the test.
+
+commands = [
+  # file-ops
+  { cmd = "ls -la", category = "file-ops", filter = "ls" },
+  { cmd = "grep -rn 'pattern' src/", category = "file-ops", filter = "grep" },
+  { cmd = "sed -n '1,120p' src/main.go", category = "file-ops", filter = "sed" },
+  { cmd = "find . -name '*.go'", category = "file-ops", status = "planned", ref = "ATR-137" },
+  { cmd = "tree -L 2", category = "file-ops", status = "planned", ref = "ATR-137" },
+  { cmd = "rg 'pattern' src/", category = "file-ops", status = "planned", ref = "ATR-137" },
+  { cmd = "diff -u old.go new.go", category = "file-ops", status = "planned", ref = "ATR-137" },
+  { cmd = "cat src/main.go", category = "file-ops", status = "wont-cover", reason = "file reads flow through the agent's native Read tool; the PostToolUse hook dedups and bounds them" },
+
+  # vcs
+  { cmd = "git status", category = "vcs", filter = "git-status" },
+  { cmd = "git log --oneline -20", category = "vcs", filter = "git-log" },
+  { cmd = "git diff HEAD", category = "vcs", filter = "git-diff" },
+  { cmd = "git add -A", category = "vcs", filter = "git-add" },
+  { cmd = "git commit -m 'msg'", category = "vcs", filter = "git-commit" },
+  { cmd = "git push origin main", category = "vcs", filter = "git-push" },
+  { cmd = "git pull", category = "vcs", filter = "git-pull" },
+  { cmd = "git fetch origin", category = "vcs", filter = "git-fetch" },
+
+  # github
+  { cmd = "gh pr list", category = "github", filter = "gh-list" },
+  { cmd = "gh pr view 42", category = "github", filter = "gh-pr-view" },
+  { cmd = "gh issue list", category = "github", filter = "gh-list" },
+  { cmd = "gh run list", category = "github", filter = "gh-list" },
+  { cmd = "gh run view 29123153293 --log", category = "github", filter = "gh-run-view" },
+  { cmd = "gh release list", category = "github", filter = "gh-list" },
+  { cmd = "gh workflow list", category = "github", filter = "gh-list" },
+
+  # testing
+  { cmd = "go test ./...", category = "testing", filter = "go-test" },
+  { cmd = "pytest", category = "testing", filter = "pytest" },
+  { cmd = "npx jest", category = "testing", filter = "js-test" },
+  { cmd = "npx vitest run", category = "testing", filter = "js-test" },
+  { cmd = "cargo test", category = "testing", filter = "cargo-test" },
+  { cmd = "npx playwright test", category = "testing", status = "planned", ref = "ATR-141" },
+  { cmd = "rspec", category = "testing", status = "planned", ref = "ATR-140" },
+  { cmd = "rake test", category = "testing", status = "planned", ref = "ATR-140" },
+
+  # lint-format
+  { cmd = "npx eslint .", category = "lint-format", filter = "eslint" },
+  { cmd = "npx tsc --noEmit", category = "lint-format", filter = "tsc" },
+  { cmd = "npx prettier --check .", category = "lint-format", filter = "prettier" },
+  { cmd = "ruff check .", category = "lint-format", filter = "ruff" },
+  { cmd = "golangci-lint run", category = "lint-format", filter = "golangci-lint" },
+  { cmd = "cargo clippy", category = "lint-format", filter = "cargo-build" },
+  { cmd = "rubocop", category = "lint-format", status = "planned", ref = "ATR-140" },
+  { cmd = "npx biome check .", category = "lint-format", status = "planned", ref = "ATR-141" },
+
+  # build
+  { cmd = "cargo build", category = "build", filter = "cargo-build" },
+  { cmd = "make build", category = "build", filter = "make" },
+  { cmd = "./gradlew build", category = "build", filter = "gradle" },
+  { cmd = "mvn package", category = "build", filter = "maven" },
+  { cmd = "npx next build", category = "build", status = "planned", ref = "ATR-141" },
+  { cmd = "npx prisma generate", category = "build", status = "planned", ref = "ATR-141" },
+
+  # packages
+  { cmd = "npm install", category = "packages", filter = "js-install" },
+  { cmd = "pnpm install", category = "packages", filter = "js-install" },
+  { cmd = "yarn add lodash", category = "packages", filter = "js-install" },
+  { cmd = "npm ci", category = "packages", filter = "js-install" },
+  { cmd = "pip install -r requirements.txt", category = "packages", filter = "pip-install" },
+  { cmd = "uv sync", category = "packages", filter = "uv" },
+  { cmd = "uv run pytest", category = "packages", filter = "pytest" },
+  { cmd = "brew install jq", category = "packages", filter = "brew" },
+  { cmd = "pip list", category = "packages", status = "planned", ref = "ATR-143" },
+  { cmd = "pip list --outdated", category = "packages", status = "planned", ref = "ATR-143" },
+  { cmd = "bundle install", category = "packages", status = "planned", ref = "ATR-140" },
+  { cmd = "pnpm list", category = "packages", status = "planned", ref = "ATR-141" },
+
+  # cloud
+  { cmd = "aws sts get-caller-identity", category = "cloud", status = "planned", ref = "ATR-139" },
+  { cmd = "aws ec2 describe-instances", category = "cloud", status = "planned", ref = "ATR-139" },
+  { cmd = "aws lambda list-functions", category = "cloud", status = "planned", ref = "ATR-139" },
+  { cmd = "aws logs get-log-events --log-group-name app", category = "cloud", status = "planned", ref = "ATR-139" },
+  { cmd = "aws cloudformation describe-stack-events --stack-name app", category = "cloud", status = "planned", ref = "ATR-139" },
+  { cmd = "aws dynamodb scan --table-name users", category = "cloud", status = "planned", ref = "ATR-139" },
+  { cmd = "aws iam list-roles", category = "cloud", status = "planned", ref = "ATR-139" },
+  { cmd = "aws s3 ls s3://bucket", category = "cloud", status = "planned", ref = "ATR-139" },
+
+  # containers
+  { cmd = "docker logs app", category = "containers", filter = "docker-logs" },
+  { cmd = "docker build -t app .", category = "containers", filter = "docker-build" },
+  { cmd = "docker pull nginx:latest", category = "containers", filter = "docker-pull" },
+  { cmd = "docker push registry/app:v1", category = "containers", filter = "docker-pull" },
+  { cmd = "kubectl get pods", category = "containers", filter = "kubectl-get" },
+  { cmd = "kubectl get services", category = "containers", filter = "kubectl-get" },
+  { cmd = "kubectl describe pod api-0", category = "containers", filter = "kubectl-describe" },
+  { cmd = "kubectl logs api-0", category = "containers", filter = "kubectl-logs" },
+  { cmd = "docker ps -a", category = "containers", status = "planned", ref = "ATR-138" },
+  { cmd = "docker images", category = "containers", status = "planned", ref = "ATR-138" },
+  { cmd = "docker compose ps", category = "containers", status = "planned", ref = "ATR-138" },
+  { cmd = "oc get pods", category = "containers", status = "planned", ref = "ATR-138" },
+  { cmd = "oc logs api-0", category = "containers", status = "planned", ref = "ATR-138" },
+
+  # iac
+  { cmd = "terraform plan", category = "iac", filter = "terraform-plan" },
+  { cmd = "tofu plan", category = "iac", filter = "terraform-plan" },
+  { cmd = "pulumi preview", category = "iac", status = "planned", ref = "ATR-142" },
+  { cmd = "pulumi up --yes", category = "iac", status = "planned", ref = "ATR-142" },
+  { cmd = "pulumi destroy --yes", category = "iac", status = "planned", ref = "ATR-142" },
+  { cmd = "pulumi refresh", category = "iac", status = "planned", ref = "ATR-142" },
+  { cmd = "pulumi stack ls", category = "iac", status = "planned", ref = "ATR-142" },
+
+  # network
+  { cmd = "curl -s https://api.example.com/v1/items", category = "network", filter = "curl" },
+  { cmd = "wget https://example.com/file.tar.gz", category = "network", status = "planned", ref = "ATR-143" },
+
+  # shell
+  { cmd = "env", category = "shell", status = "planned", ref = "ATR-144" },
+  { cmd = "printenv", category = "shell", status = "planned", ref = "ATR-144" },
+]
