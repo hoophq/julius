@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -29,7 +30,13 @@ func CompactJSON(raw string) Result {
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.UseNumber()
 	var v any
-	if err := dec.Decode(&v); err != nil || dec.More() {
+	if err := dec.Decode(&v); err != nil {
+		return Result{Output: raw}
+	}
+	// The whole input must be one JSON document: a second decode may find
+	// only whitespace (io.EOF). Anything else — prose after the JSON, a
+	// stray bracket — means rewriting would silently drop the tail.
+	if err := dec.Decode(new(any)); err != io.EOF {
 		return Result{Output: raw}
 	}
 	switch v.(type) {
@@ -101,9 +108,9 @@ func compactValue(v any, key string, st *compactStats) any {
 		}
 		return out
 	case string:
-		if r := []rune(t); len(r) > jsonStrMax && !protectedKey(key) {
+		if cut, ok := truncateRunes(t, jsonStrMax); ok && !protectedKey(key) {
 			st.strs++
-			return string(r[:jsonStrMax]) + "…"
+			return cut + "…"
 		}
 		return t
 	default:
@@ -111,11 +118,30 @@ func compactValue(v any, key string, st *compactStats) any {
 	}
 }
 
+// truncateRunes cuts t after max runes, reporting whether it was longer.
+// It scans instead of converting to []rune: the strings this runs on are
+// exactly the large ones, and only the kept prefix matters.
+func truncateRunes(t string, max int) (string, bool) {
+	if len(t) <= max { // ≤ max bytes ⇒ ≤ max runes
+		return t, false
+	}
+	n := 0
+	for i := range t {
+		if n == max {
+			return t[:i], true
+		}
+		n++
+	}
+	return t, false
+}
+
 // protectedKey reports whether a field's value must survive intact because
 // agents feed it back into subsequent calls — a truncated id or url breaks
-// the next request, which costs far more than the tokens saved.
+// the next request, which costs far more than the tokens saved. Plural
+// forms (ids, issueIds, resourceUrls) carry the same values and get the
+// same protection; array elements inherit their array's key.
 func protectedKey(key string) bool {
-	k := strings.ToLower(key)
+	k := strings.TrimSuffix(strings.ToLower(key), "s")
 	for _, s := range []string{"id", "url", "href", "identifier", "slug", "sha", "key"} {
 		if k == s || strings.HasSuffix(k, s) {
 			return true

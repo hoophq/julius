@@ -8,11 +8,32 @@ import (
 )
 
 func TestCompactJSONNonJSONPassthrough(t *testing.T) {
-	for _, raw := range []string{"plain prose, not json", `{"broken": `, `42 trailing garbage`, `"just a string"`, `12345`} {
+	pad := `"pad":"` + strings.Repeat("p", 600) + `"`
+	for _, raw := range []string{
+		"plain prose, not json",
+		`{"broken": `,
+		`42 trailing garbage`,
+		`"just a string"`,
+		`12345`,
+		// JSON followed by a tail: rewriting would silently drop the tail
+		`{"a":1,` + pad + `} trailing prose`,
+		`{"a":1,` + pad + `} }`,
+		`{"a":1,` + pad + `} ]`,
+		`{"a":null,` + pad + `} {"b":2}`,
+		`[1,2,` + pad[6:] + `] [3]`,
+	} {
 		res := Finalize(raw, CompactJSON(raw))
 		if res.Output != raw {
-			t.Errorf("non-compactable input %q was modified: %q", raw, res.Output)
+			t.Errorf("non-compactable input %.60q... was modified: %.60q", raw, res.Output)
 		}
+	}
+}
+
+func TestCompactJSONTrailingWhitespaceAllowed(t *testing.T) {
+	raw := `{"gone":null,"pad":"` + strings.Repeat("p", 600) + `"}` + "  \n\t"
+	res := Finalize(raw, CompactJSON(raw))
+	if !res.Applied {
+		t.Error("trailing whitespace must not block compaction")
 	}
 }
 
@@ -79,6 +100,41 @@ func TestCompactJSONProtectedKeysSurvive(t *testing.T) {
 	}
 	if strings.Contains(res.Output, longDesc) {
 		t.Error("unprotected long string survived")
+	}
+}
+
+func TestCompactJSONPluralProtectedKeys(t *testing.T) {
+	longURL := "https://example.com/" + strings.Repeat("p/", 300)
+	longID := strings.Repeat("a1b2-", 130)
+	raw := fmt.Sprintf(`{"ids": [%q], "resourceUrls": [%q], "issueIds": %q, "description": %q}`,
+		longID, longURL, longID, strings.Repeat("x", 600))
+	res := Finalize(raw, CompactJSON(raw))
+	if !res.Applied {
+		t.Fatal("not compacted")
+	}
+	if !strings.Contains(res.Output, longID) || !strings.Contains(res.Output, longURL) {
+		t.Errorf("plural-keyed id/url was truncated: %s", res.Output)
+	}
+	if !strings.Contains(res.Output, "1 long strings truncated") {
+		t.Errorf("unprotected description should still truncate: %s", res.Output)
+	}
+}
+
+func TestCompactJSONMultiByteTruncation(t *testing.T) {
+	raw := fmt.Sprintf(`{"description": %q, "gone": null}`, strings.Repeat("é", 600))
+	res := Finalize(raw, CompactJSON(raw))
+	if !res.Applied {
+		t.Fatal("not compacted")
+	}
+	jsonPart, _, _ := strings.Cut(res.Output, "\n[julius]")
+	var parsed struct {
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal([]byte(jsonPart), &parsed); err != nil {
+		t.Fatalf("multi-byte truncation broke JSON/UTF-8: %v", err)
+	}
+	if got := len([]rune(strings.TrimSuffix(parsed.Description, "…"))); got != 500 {
+		t.Errorf("truncated at %d runes, want 500", got)
 	}
 }
 
