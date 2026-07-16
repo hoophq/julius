@@ -109,6 +109,29 @@ func buildCorpus() []corpusCase {
 		fmt.Fprintf(&ls, "-rw-r--r--   1 dev  staff  %5d Jul 10 12:%02d file_%03d.go\n", i*137, i%60, i)
 	}
 
+	var find strings.Builder
+	for i := 0; i < 400; i++ {
+		fmt.Fprintf(&find, "./internal/pkg%02d/subpkg/file_%03d_test.go\n", i%25, i)
+	}
+
+	var tree strings.Builder
+	tree.WriteString(".\n")
+	for i := 0; i < 350; i++ {
+		fmt.Fprintf(&tree, "│   ├── file_%03d.go\n", i)
+	}
+	tree.WriteString("\n25 directories, 350 files\n")
+
+	var rg strings.Builder
+	for i := 0; i < 300; i++ {
+		fmt.Fprintf(&rg, "internal/pkg%02d/file%02d.go:%d:\tif err := doThing%d(ctx); err != nil {\n", i%20, i%7, i*3+1, i)
+	}
+
+	var pdiff strings.Builder
+	pdiff.WriteString("--- a/config.yaml\n+++ b/config.yaml\n")
+	for i := 0; i < 250; i++ {
+		fmt.Fprintf(&pdiff, "@@ -%d,3 +%d,3 @@\n key_%03d: stable\n-value_%03d: old\n+value_%03d: new\n", i*4+1, i*4+1, i, i, i)
+	}
+
 	return []corpusCase{
 		{"go test ./...", goTest.String(), 85},
 		{"pytest", pytest.String(), 75},
@@ -125,6 +148,10 @@ func buildCorpus() []corpusCase {
 		{"gh run view 29123153293 --log", ghlog.String(), 55},
 		{"sed -n '1,400p' main.go", sed.String(), 55},
 		{"ls -la internal/", ls.String(), 50},
+		{"find . -name '*_test.go'", find.String(), 65},
+		{"tree internal/", tree.String(), 60},
+		{"rg 'err !=' internal/", rg.String(), 55},
+		{"diff -u a/config.yaml b/config.yaml", pdiff.String(), 65},
 	}
 }
 

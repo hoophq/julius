@@ -4,8 +4,8 @@
 # payload, so nothing is dropped, just bounded.
 
 [filters.grep]
-description = "shell grep: capped matches, same 120-line budget as native Grep"
-command = '^(e|f)?grep\b'
+description = "shell grep/rg: capped matches, same 120-line budget as native Grep"
+command = '^((e|f)?grep|rg)\b'
 strip_ansi = true
 max_line_length = 500
 head = 120
@@ -19,6 +19,17 @@ internal/router/router.go:40:func SplitChain(cmd string) []Part {
 want = """
 internal/router/router.go:14:func SplitEnvPrefix(text string) (prefix, rest string) {
 internal/router/router.go:40:func SplitChain(cmd string) []Part {
+"""
+
+[[filters.grep.tests]]
+name = "rg matches unchanged"
+input = """
+internal/filter/dsl.go:74:func ParseFile(data []byte) ([]*Spec, error) {
+internal/filter/dsl.go:150:func (s *Spec) Name() string { return s.name }
+"""
+want = """
+internal/filter/dsl.go:74:func ParseFile(data []byte) ([]*Spec, error) {
+internal/filter/dsl.go:150:func (s *Spec) Name() string { return s.name }
 """
 
 [[filters.grep.tests]]
@@ -63,3 +74,81 @@ func main() {
 	fmt.Println("hello")
 }
 """
+
+[filters.find]
+description = "find: capped result list"
+command = '^find\b'
+strip_ansi = true
+head = 100
+
+[[filters.find.tests]]
+name = "short result list unchanged"
+input = """
+./internal/filter/registry.go
+./internal/filter/dsl.go
+"""
+want = """
+./internal/filter/registry.go
+./internal/filter/dsl.go
+"""
+
+[filters.tree]
+description = "tree: capped listing"
+command = '^tree\b'
+strip_ansi = true
+head = 100
+
+[[filters.tree.tests]]
+name = "short tree unchanged"
+input = """
+.
+├── go.mod
+└── internal
+    └── filter
+        └── registry.go
+
+3 directories, 2 files
+"""
+want = """
+.
+├── go.mod
+└── internal
+    └── filter
+        └── registry.go
+
+3 directories, 2 files
+"""
+
+# Plain diff (non-git). Exit code 1 means "differences found", not failure —
+# the hunks are the payload, so cap only; identical files collapse.
+[filters.diff]
+description = "diff: capped hunks, identical files collapse"
+command = '^diff\b'
+strip_ansi = true
+head = 200
+if_empty = "diff: no differences"
+
+[[filters.diff.tests]]
+name = "differences kept"
+exit_code = 1
+input = """
+--- a/config.yaml
++++ b/config.yaml
+@@ -3,3 +3,3 @@
+ timeout: 30
+-retries: 2
++retries: 5
+"""
+want = """
+--- a/config.yaml
++++ b/config.yaml
+@@ -3,3 +3,3 @@
+ timeout: 30
+-retries: 2
++retries: 5
+"""
+
+[[filters.diff.tests]]
+name = "identical files collapse"
+input = ""
+want = "diff: no differences"

@@ -16,10 +16,10 @@ commands = [
   { cmd = "ls -la", category = "file-ops", filter = "ls" },
   { cmd = "grep -rn 'pattern' src/", category = "file-ops", filter = "grep" },
   { cmd = "sed -n '1,120p' src/main.go", category = "file-ops", filter = "sed" },
-  { cmd = "find . -name '*.go'", category = "file-ops", status = "planned", ref = "ATR-137" },
-  { cmd = "tree -L 2", category = "file-ops", status = "planned", ref = "ATR-137" },
-  { cmd = "rg 'pattern' src/", category = "file-ops", status = "planned", ref = "ATR-137" },
-  { cmd = "diff -u old.go new.go", category = "file-ops", status = "planned", ref = "ATR-137" },
+  { cmd = "find . -name '*.go'", category = "file-ops", filter = "find" },
+  { cmd = "tree -L 2", category = "file-ops", filter = "tree" },
+  { cmd = "rg 'pattern' src/", category = "file-ops", filter = "grep" },
+  { cmd = "diff -u old.go new.go", category = "file-ops", filter = "diff" },
   { cmd = "cat src/main.go", category = "file-ops", status = "wont-cover", reason = "file reads flow through the agent's native Read tool; the PostToolUse hook dedups and bounds them" },
 
   # vcs
