@@ -48,8 +48,11 @@ commands = [
   { cmd = "npx vitest run", category = "testing", filter = "js-test" },
   { cmd = "cargo test", category = "testing", filter = "cargo-test" },
   { cmd = "npx playwright test", category = "testing", status = "planned", ref = "ATR-141" },
-  { cmd = "rspec", category = "testing", status = "planned", ref = "ATR-140" },
-  { cmd = "rake test", category = "testing", status = "planned", ref = "ATR-140" },
+  { cmd = "rspec", category = "testing", filter = "rspec" },
+  { cmd = "bundle exec rspec", category = "testing", filter = "rspec" },
+  { cmd = "bin/rspec", category = "testing", filter = "rspec" },
+  { cmd = "rake test", category = "testing", filter = "rake-test" },
+  { cmd = "rails test", category = "testing", filter = "rake-test" },
 
   # lint-format
   { cmd = "npx eslint .", category = "lint-format", filter = "eslint" },
@@ -58,7 +61,7 @@ commands = [
   { cmd = "ruff check .", category = "lint-format", filter = "ruff" },
   { cmd = "golangci-lint run", category = "lint-format", filter = "golangci-lint" },
   { cmd = "cargo clippy", category = "lint-format", filter = "cargo-build" },
-  { cmd = "rubocop", category = "lint-format", status = "planned", ref = "ATR-140" },
+  { cmd = "rubocop", category = "lint-format", filter = "rubocop" },
   { cmd = "npx biome check .", category = "lint-format", status = "planned", ref = "ATR-141" },
 
   # build
@@ -80,7 +83,8 @@ commands = [
   { cmd = "brew install jq", category = "packages", filter = "brew" },
   { cmd = "pip list", category = "packages", status = "planned", ref = "ATR-143" },
   { cmd = "pip list --outdated", category = "packages", status = "planned", ref = "ATR-143" },
-  { cmd = "bundle install", category = "packages", status = "planned", ref = "ATR-140" },
+  { cmd = "bundle install", category = "packages", filter = "bundle-install" },
+  { cmd = "bundle update", category = "packages", filter = "bundle-install" },
   { cmd = "pnpm list", category = "packages", status = "planned", ref = "ATR-141" },
 
   # cloud

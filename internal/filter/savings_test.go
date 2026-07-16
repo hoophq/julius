@@ -167,6 +167,13 @@ func buildCorpus() []corpusCase {
 		fmt.Fprintf(&s3ls, "2026-07-%02d 12:%02d:%02d    %8d backups/db-part-%04d.tar.gz\n", i%28+1, i%60, i%60, i*4096+1024, i)
 	}
 
+	var bundle strings.Builder
+	bundle.WriteString("Fetching gem metadata from https://rubygems.org/.........\nResolving dependencies...\n")
+	for i := 0; i < 150; i++ {
+		fmt.Fprintf(&bundle, "Fetching gem-%03d 1.%d.0\nInstalling gem-%03d 1.%d.0\n", i, i%9, i, i%9)
+	}
+	bundle.WriteString("Bundle complete! 42 Gemfile dependencies, 150 gems now installed.\n")
+
 	return []corpusCase{
 		{"go test ./...", goTest.String(), 85},
 		{"pytest", pytest.String(), 75},
@@ -192,6 +199,7 @@ func buildCorpus() []corpusCase {
 		{"aws ec2 describe-instances", ec2.String(), 75},
 		{"aws logs get-log-events --log-group-name app", awsLogs.String(), 70},
 		{"aws s3 ls s3://backups --recursive", s3ls.String(), 55},
+		{"bundle install", bundle.String(), 90},
 	}
 }
 
