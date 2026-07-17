@@ -3,14 +3,15 @@
 Cut LLM token usage where it actually burns: dev-command output entering your coding agent's context, and API traffic from your scripts and apps.
 
 [![ci](https://github.com/hoophq/julius/actions/workflows/ci.yml/badge.svg)](https://github.com/hoophq/julius/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/hoophq/julius)](https://github.com/hoophq/julius/releases/latest)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Coding agents spend most of their context window on low-signal output — test runners echoing every passing test, package managers narrating downloads, the same file read three times in one session. You pay for those tokens on every subsequent request, because the whole conversation is resent each turn.
 
 julius sits between the noise and the model:
 
-- **Command-output compression** — dev commands (git, test runners, linters, docker, package managers) return a compressed, high-signal version of their output. **Typically 60–90% savings on supported commands**, measured, with the full raw output always recoverable from disk.
-- **Native tool interception** — file re-reads collapse to a marker when nothing changed (or a diff when something did), repeated command outputs dedupe, search results get bounded. This works on your agent's built-in tools, not just shell commands.
+- **Command-output compression** — dev commands return a compressed, high-signal version of their output: 60+ built-in filters covering git, test runners, linters, package managers, docker/kubectl, cloud and infra CLIs (aws, gh, terraform), build tools, and shell utilities. **Typically 60–90% savings on supported commands**, measured, with the full raw output always recoverable from disk.
+- **Native tool interception** — file re-reads collapse to a marker when nothing changed (or a diff when something did), repeated command outputs dedupe, search results get bounded, and (opt-in) MCP tool outputs are compacted. This works on your agent's built-in tools, not just shell commands.
 - **API usage metering** — point any script at the julius local proxy (`ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL`) and get exact, provider-reported token usage per app and model. No code changes, no TLS tricks, payloads forwarded byte-for-byte — unless an app opts into tool-result compression (below).
 
 ## Install
@@ -33,7 +34,7 @@ julius init -g      # global: hooks in ~/.claude/settings.json, active in every 
 julius doctor       # verifies everything is wired up
 ```
 
-To scope julius to a single project instead, run `julius init` (no flag) inside it — the hooks land in that project's `.claude/settings.json` only.
+To scope julius to a single project instead, run `julius init` (no flag) inside it — the hooks land in that project's `.claude/settings.json` only. Add `--mcp` to either form to also compress MCP tool outputs (opt-in — see below); re-running init upgrades an existing install in place.
 
 Start a new session and work normally. Commands the agent runs are rewritten through julius transparently; native Read/Grep/Glob results are deduplicated and bounded. Then:
 
@@ -125,7 +126,7 @@ julius raw <command>      # escape hatch: run with no filtering
 
 ## Custom filters
 
-Drop project-specific filters in `.julius/filters.toml` — same declarative format as the [built-in catalog](internal/filter/builtin/), documented in [docs/filters.md](docs/filters.md). Filters are regex pipelines with inline tests; run them with `julius filters test` (non-zero exit on failure, CI-friendly), and the engine enforces the never-larger guarantee on top of whatever you write.
+Drop project-specific filters in `.julius/filters.toml`, or user-wide ones in `<user config dir>/julius/filters.toml` — same declarative format as the [built-in catalog](internal/filter/builtin/), documented in [docs/filters.md](docs/filters.md). Filters are regex pipelines with inline tests; run them with `julius filters test` (non-zero exit on failure, CI-friendly), and the engine enforces the never-larger guarantee on top of whatever you write.
 
 ## Scope, honestly
 
