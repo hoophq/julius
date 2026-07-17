@@ -174,6 +174,19 @@ func buildCorpus() []corpusCase {
 	}
 	bundle.WriteString("Bundle complete! 42 Gemfile dependencies, 150 gems now installed.\n")
 
+	var pw strings.Builder
+	pw.WriteString("Running 120 tests using 4 workers\n")
+	for i := 0; i < 120; i++ {
+		fmt.Fprintf(&pw, "  ✓  %d e2e/suite%02d.spec.ts:%d:5 › scenario %d passes (%dms)\n", i+1, i%12, i*3+8, i, i*7%900+100)
+	}
+	pw.WriteString("\n  120 passed (42.3s)\n")
+
+	var pnpmls strings.Builder
+	pnpmls.WriteString("Legend: production dependency, optional only, dev only\n\napp@1.0.0 /Users/dev/app\n\ndependencies:\n")
+	for i := 0; i < 250; i++ {
+		fmt.Fprintf(&pnpmls, "dep-%03d 1.%d.%d\n", i, i%9, i%17)
+	}
+
 	return []corpusCase{
 		{"go test ./...", goTest.String(), 85},
 		{"pytest", pytest.String(), 75},
@@ -200,6 +213,8 @@ func buildCorpus() []corpusCase {
 		{"aws logs get-log-events --log-group-name app", awsLogs.String(), 70},
 		{"aws s3 ls s3://backups --recursive", s3ls.String(), 55},
 		{"bundle install", bundle.String(), 90},
+		{"npx playwright test", pw.String(), 90},
+		{"pnpm list --depth 1", pnpmls.String(), 50},
 	}
 }
 
@@ -207,8 +222,9 @@ func buildCorpus() []corpusCase {
 // at least 60% of tokens on average across representative outputs.
 func TestCorpusSavings(t *testing.T) {
 	reg := Load(t.TempDir()) // no project/user tiers: builtins only
+	corpus := buildCorpus()
 	var total float64
-	for _, c := range buildCorpus() {
+	for _, c := range corpus {
 		f := reg.Pick(c.cmd)
 		if f == nil {
 			t.Fatalf("no filter for corpus command %q", c.cmd)
@@ -222,7 +238,7 @@ func TestCorpusSavings(t *testing.T) {
 		}
 		total += saved
 	}
-	avg := total / float64(len(buildCorpus()))
+	avg := total / float64(len(corpus))
 	t.Logf("average savings: %.1f%%", avg)
 	if avg < 60 {
 		t.Errorf("average corpus savings %.1f%%, acceptance floor is 60%%", avg)

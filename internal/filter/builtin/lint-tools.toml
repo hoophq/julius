@@ -86,3 +86,36 @@ internal/cli/wrap.go:42:2: ineffectual assignment to `err` (ineffassign)
 	err = doThing()
 	^
 """
+
+# biome — diagnostics and the verdict; already terse, drop blank noise.
+[filters.biome]
+description = "biome: diagnostics and summary only"
+command = '(^|\s)biome\s+(check|lint|format|ci)\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = ['^\s*$']
+if_empty = "biome: clean"
+
+[[filters.biome.tests]]
+name = "clean run keeps the verdict"
+input = "Checked 45 files in 12ms. No fixes applied.\n"
+want = "Checked 45 files in 12ms. No fixes applied."
+
+[[filters.biome.tests]]
+name = "diagnostics kept"
+exit_code = 1
+input = """
+src/app.ts:12:7 lint/correctness/noUnusedVariables ━━━━━━━━━━
+
+  ✖ This variable is unused.
+
+    10 │ const x = 1;
+
+Checked 45 files in 15ms. Found 1 error.
+"""
+want = """
+src/app.ts:12:7 lint/correctness/noUnusedVariables ━━━━━━━━━━
+  ✖ This variable is unused.
+    10 │ const x = 1;
+Checked 45 files in 15ms. Found 1 error.
+"""

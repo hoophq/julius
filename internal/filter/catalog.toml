@@ -47,7 +47,7 @@ commands = [
   { cmd = "npx jest", category = "testing", filter = "js-test" },
   { cmd = "npx vitest run", category = "testing", filter = "js-test" },
   { cmd = "cargo test", category = "testing", filter = "cargo-test" },
-  { cmd = "npx playwright test", category = "testing", status = "planned", ref = "ATR-141" },
+  { cmd = "npx playwright test", category = "testing", filter = "playwright" },
   { cmd = "rspec", category = "testing", filter = "rspec" },
   { cmd = "bundle exec rspec", category = "testing", filter = "rspec" },
   { cmd = "bin/rspec", category = "testing", filter = "rspec" },
@@ -62,15 +62,15 @@ commands = [
   { cmd = "golangci-lint run", category = "lint-format", filter = "golangci-lint" },
   { cmd = "cargo clippy", category = "lint-format", filter = "cargo-build" },
   { cmd = "rubocop", category = "lint-format", filter = "rubocop" },
-  { cmd = "npx biome check .", category = "lint-format", status = "planned", ref = "ATR-141" },
+  { cmd = "npx biome check .", category = "lint-format", filter = "biome" },
 
   # build
   { cmd = "cargo build", category = "build", filter = "cargo-build" },
   { cmd = "make build", category = "build", filter = "make" },
   { cmd = "./gradlew build", category = "build", filter = "gradle" },
   { cmd = "mvn package", category = "build", filter = "maven" },
-  { cmd = "npx next build", category = "build", status = "planned", ref = "ATR-141" },
-  { cmd = "npx prisma generate", category = "build", status = "planned", ref = "ATR-141" },
+  { cmd = "npx next build", category = "build", filter = "next-build" },
+  { cmd = "npx prisma generate", category = "build", filter = "prisma-generate" },
 
   # packages
   { cmd = "npm install", category = "packages", filter = "js-install" },
@@ -85,7 +85,7 @@ commands = [
   { cmd = "pip list --outdated", category = "packages", status = "planned", ref = "ATR-143" },
   { cmd = "bundle install", category = "packages", filter = "bundle-install" },
   { cmd = "bundle update", category = "packages", filter = "bundle-install" },
-  { cmd = "pnpm list", category = "packages", status = "planned", ref = "ATR-141" },
+  { cmd = "pnpm list", category = "packages", filter = "pnpm-list" },
 
   # cloud
   { cmd = "aws sts get-caller-identity", category = "cloud", filter = "aws-sts" },

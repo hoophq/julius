@@ -109,3 +109,155 @@ want = """
 Already up to date
 Done in 1.2s using pnpm v10.0.0
 """
+
+# next build — route table, warnings, and errors; build progress dropped.
+# detect_output lets the PostToolUse hook recognize Next output when the
+# build ran as `npm run build` and the command line alone says nothing.
+[filters.next-build]
+description = "next build: route table and errors only"
+command = '(^|\s)next\s+build\b'
+detect_output = ['^\s*▲ Next\.js \d+']
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^\s*Creating an optimized production build',
+  '^\s*Linting and checking validity of types',
+  '^\s*Skipping validation of types',
+  '^\s*Collecting page data',
+  '^\s*Generating static pages',
+  '^\s*Collecting build traces',
+  '^\s*Finalizing page optimization',
+  '^\s*$',
+]
+if_empty = "next build: ok"
+
+[[filters.next-build.tests]]
+name = "progress dropped, route table kept"
+input = """
+   ▲ Next.js 14.2.3
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully
+   Linting and checking validity of types ...
+   Collecting page data ...
+   Generating static pages (8/8)
+   Collecting build traces ...
+   Finalizing page optimization ...
+
+Route (app)                              Size     First Load JS
+┌ ○ /                                    5.2 kB   92.1 kB
+└ ○ /about                               1.1 kB   88.0 kB
+
+○  (Static)  prerendered as static content
+"""
+want = """
+   ▲ Next.js 14.2.3
+ ✓ Compiled successfully
+Route (app)                              Size     First Load JS
+┌ ○ /                                    5.2 kB   92.1 kB
+└ ○ /about                               1.1 kB   88.0 kB
+○  (Static)  prerendered as static content
+"""
+
+[[filters.next-build.tests]]
+name = "compile errors survive"
+exit_code = 1
+input = """
+   ▲ Next.js 14.2.3
+
+   Creating an optimized production build ...
+Failed to compile.
+
+./src/app/page.tsx:5:9
+Type error: Type 'number' is not assignable to type 'string'.
+
+> 5 |   const title: string = 42
+"""
+want = """
+   ▲ Next.js 14.2.3
+Failed to compile.
+./src/app/page.tsx:5:9
+Type error: Type 'number' is not assignable to type 'string'.
+> 5 |   const title: string = 42
+"""
+
+# prisma generate — the generated-client line and errors; env chatter and
+# promo tips dropped.
+[filters.prisma-generate]
+description = "prisma generate: outcome only"
+command = '(^|\s)prisma\s+generate\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^Environment variables loaded',
+  '^Prisma schema loaded',
+  '^Start by importing',
+  '^Tip: ',
+  '^┌',
+  '^│',
+  '^└',
+  '^\s*$',
+]
+if_empty = "prisma generate: ok"
+
+[[filters.prisma-generate.tests]]
+name = "chatter dropped, outcome kept"
+input = """
+Environment variables loaded from .env
+Prisma schema loaded from prisma/schema.prisma
+
+✔ Generated Prisma Client (v5.14.0) to ./node_modules/@prisma/client in 89ms
+
+Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+"""
+want = "✔ Generated Prisma Client (v5.14.0) to ./node_modules/@prisma/client in 89ms"
+
+[[filters.prisma-generate.tests]]
+name = "schema errors survive"
+exit_code = 1
+input = """
+Environment variables loaded from .env
+Prisma schema loaded from prisma/schema.prisma
+Error: Prisma schema validation - (get-dmmf wasm)
+Error code: P1012
+error: Type "Strng" is neither a built-in type, nor refers to another model.
+"""
+want = """
+Error: Prisma schema validation - (get-dmmf wasm)
+Error code: P1012
+error: Type "Strng" is neither a built-in type, nor refers to another model.
+"""
+
+# pnpm list — capped dependency tree; legend boilerplate dropped.
+[filters.pnpm-list]
+description = "pnpm list: capped dependency tree"
+command = '^pnpm\s+(list|ls)\b'
+strip_ansi = true
+drop_lines = [
+  '^Legend: ',
+  '^\s*$',
+]
+head = 100
+
+[[filters.pnpm-list.tests]]
+name = "short tree unchanged, legend dropped"
+input = """
+Legend: production dependency, optional only, dev only
+
+app@1.0.0 /Users/dev/app
+
+dependencies:
+next 14.2.3
+react 18.3.1
+
+devDependencies:
+typescript 5.4.5
+"""
+want = """
+app@1.0.0 /Users/dev/app
+dependencies:
+next 14.2.3
+react 18.3.1
+devDependencies:
+typescript 5.4.5
+"""

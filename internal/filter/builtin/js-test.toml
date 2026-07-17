@@ -1,7 +1,7 @@
 # jest / vitest — keep failures and the run summary, drop pass noise.
 [filters.js-test]
 description = "jest/vitest: failures and summary only"
-command = '(^|\s)(jest|vitest)\b|^(npx|pnpm|npm run|yarn)\s+(jest|vitest|test)\b'
+command = '(^|\s)(jest|vitest)\b|^(npx|pnpm|npm run|yarn)\s+(jest|vitest)\b'
 detect_output = ['^Test Suites: \d+', '^(PASS|FAIL) \S+\.(test|spec)\.[jt]sx?']
 strip_ansi = true
 merge_stderr = true
@@ -69,4 +69,62 @@ FAIL src/api.test.ts
     > 15 |   expect(res.status).toBe(400)
 Test Suites: 1 failed, 1 total
 Tests:       1 failed, 1 passed, 2 total
+"""
+
+# playwright — keep failures and the run summary, drop pass noise.
+[filters.playwright]
+description = "playwright: failures and summary only"
+command = '(^|\s)playwright\s+test\b'
+detect_output = ['^Running \d+ tests? using \d+ workers?']
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^Running \d+ tests? using \d+ workers?',
+  '^\s*✓',
+  '^\s*·',
+  '^\s*Slow test file',
+  '^\s*Consider splitting',
+  '^\s*$',
+]
+if_empty = "playwright: ok"
+
+[[filters.playwright.tests]]
+name = "passing run keeps summary only"
+input = """
+Running 24 tests using 4 workers
+  ✓  1 e2e/auth.spec.ts:8:5 › signs in (812ms)
+  ✓  2 e2e/auth.spec.ts:15:5 › signs out (401ms)
+
+  24 passed (11.2s)
+"""
+want = "  24 passed (11.2s)"
+
+[[filters.playwright.tests]]
+name = "failures kept"
+exit_code = 1
+input = """
+Running 3 tests using 1 worker
+  ✓  1 e2e/auth.spec.ts:8:5 › signs in (812ms)
+  ✘  2 e2e/cart.spec.ts:12:5 › adds item (1.2s)
+
+  1) e2e/cart.spec.ts:12:5 › adds item ─────────────────────────
+
+    Error: expect(locator).toBeVisible()
+
+      12 |   await expect(page.getByText('Added')).toBeVisible()
+         |                                         ^
+
+  1 failed
+    e2e/cart.spec.ts:12:5 › adds item
+  2 passed (3.1s)
+"""
+want = """
+  ✘  2 e2e/cart.spec.ts:12:5 › adds item (1.2s)
+  1) e2e/cart.spec.ts:12:5 › adds item ─────────────────────────
+    Error: expect(locator).toBeVisible()
+      12 |   await expect(page.getByText('Added')).toBeVisible()
+         |                                         ^
+  1 failed
+    e2e/cart.spec.ts:12:5 › adds item
+  2 passed (3.1s)
 """
