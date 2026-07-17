@@ -1,0 +1,82 @@
+# wget — the transfer transcript goes to stderr: resolve/response/outcome
+# lines are the signal, progress bars and dot-tracing are the noise. Bodies
+# fetched with -O- land on stdout and get curl's treatment: capped line
+# count, lines never truncated mid-line. Failing runs inherit the engine's
+# raw-output stash like every wrapped command.
+
+[filters.wget]
+description = "wget: transfer outcome, capped body"
+command = '^wget\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^\s*\d+K[ .]+\d+%',
+  '\d+%\[[=><. ]*\]',
+  '\[ <=> ',
+  '^\s*$',
+]
+head = 250
+
+[[filters.wget.tests]]
+name = "dot-tracing dropped, transcript kept"
+input = """
+--2026-07-17 10:00:00--  https://example.com/file.tar.gz
+Resolving example.com (example.com)... 93.184.216.34
+Connecting to example.com (example.com)|93.184.216.34|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 10485760 (10M) [application/gzip]
+Saving to: 'file.tar.gz'
+
+     0K .......... .......... .......... .......... ..........  0% 1.10M 9s
+    50K .......... .......... .......... .......... ..........  0% 2.20M 7s
+ 10190K .......... ..                                         100% 5.2M=4.0s
+
+2026-07-17 10:00:04 (2.5 MB/s) - 'file.tar.gz' saved [10485760/10485760]
+"""
+want = """
+--2026-07-17 10:00:00--  https://example.com/file.tar.gz
+Resolving example.com (example.com)... 93.184.216.34
+Connecting to example.com (example.com)|93.184.216.34|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 10485760 (10M) [application/gzip]
+Saving to: 'file.tar.gz'
+2026-07-17 10:00:04 (2.5 MB/s) - 'file.tar.gz' saved [10485760/10485760]
+"""
+
+[[filters.wget.tests]]
+name = "bar progress dropped"
+input = """
+--2026-07-17 10:00:00--  https://example.com/data.json
+HTTP request sent, awaiting response... 200 OK
+Length: unspecified [application/json]
+Saving to: 'data.json'
+
+data.json               [ <=>                ]  45.12K  --.-KB/s    in 0.04s
+
+2026-07-17 10:00:00 (1.1 MB/s) - 'data.json' saved [46203]
+"""
+want = """
+--2026-07-17 10:00:00--  https://example.com/data.json
+HTTP request sent, awaiting response... 200 OK
+Length: unspecified [application/json]
+Saving to: 'data.json'
+2026-07-17 10:00:00 (1.1 MB/s) - 'data.json' saved [46203]
+"""
+
+[[filters.wget.tests]]
+name = "failure survives"
+exit_code = 8
+input = """
+--2026-07-17 10:00:00--  https://example.com/missing.tar.gz
+Resolving example.com (example.com)... 93.184.216.34
+Connecting to example.com (example.com)|93.184.216.34|:443... connected.
+HTTP request sent, awaiting response... 404 Not Found
+2026-07-17 10:00:00 ERROR 404: Not Found.
+"""
+want = """
+--2026-07-17 10:00:00--  https://example.com/missing.tar.gz
+Resolving example.com (example.com)... 93.184.216.34
+Connecting to example.com (example.com)|93.184.216.34|:443... connected.
+HTTP request sent, awaiting response... 404 Not Found
+2026-07-17 10:00:00 ERROR 404: Not Found.
+"""

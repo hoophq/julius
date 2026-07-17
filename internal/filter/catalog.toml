@@ -81,8 +81,8 @@ commands = [
   { cmd = "uv sync", category = "packages", filter = "uv" },
   { cmd = "uv run pytest", category = "packages", filter = "pytest" },
   { cmd = "brew install jq", category = "packages", filter = "brew" },
-  { cmd = "pip list", category = "packages", status = "planned", ref = "ATR-143" },
-  { cmd = "pip list --outdated", category = "packages", status = "planned", ref = "ATR-143" },
+  { cmd = "pip list", category = "packages", filter = "pip-list" },
+  { cmd = "pip list --outdated", category = "packages", filter = "pip-list" },
   { cmd = "bundle install", category = "packages", filter = "bundle-install" },
   { cmd = "bundle update", category = "packages", filter = "bundle-install" },
   { cmd = "pnpm list", category = "packages", filter = "pnpm-list" },
@@ -124,7 +124,7 @@ commands = [
 
   # network
   { cmd = "curl -s https://api.example.com/v1/items", category = "network", filter = "curl" },
-  { cmd = "wget https://example.com/file.tar.gz", category = "network", status = "planned", ref = "ATR-143" },
+  { cmd = "wget https://example.com/file.tar.gz", category = "network", filter = "wget" },
 
   # shell
   { cmd = "env", category = "shell", status = "planned", ref = "ATR-144" },

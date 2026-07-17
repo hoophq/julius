@@ -49,6 +49,49 @@ ERROR: Could not find a version that satisfies the requirement nonexistent-packa
 ERROR: No matching distribution found for nonexistent-package-xyz
 """
 
+# pip list — the table is dense already; cap runaway environments and
+# drop the self-update nag. --outdated flows through the same filter.
+[filters.pip-list]
+description = "pip list: capped package table"
+command = '^(pip3?|python3? -m pip)\s+list\b'
+strip_ansi = true
+drop_lines = [
+  '^\[notice\]',
+  '^\s*$',
+]
+head = 100
+
+[[filters.pip-list.tests]]
+name = "short table unchanged, notice dropped"
+input = """
+Package  Version
+-------- ---------
+requests 2.32.3
+urllib3  2.2.1
+
+[notice] A new release of pip is available: 24.0 -> 24.1
+[notice] To update, run: pip install --upgrade pip
+"""
+want = """
+Package  Version
+-------- ---------
+requests 2.32.3
+urllib3  2.2.1
+"""
+
+[[filters.pip-list.tests]]
+name = "outdated table unchanged"
+input = """
+Package  Version Latest Type
+-------- ------- ------ -----
+requests 2.31.0  2.32.3 wheel
+"""
+want = """
+Package  Version Latest Type
+-------- ------- ------ -----
+requests 2.31.0  2.32.3 wheel
+"""
+
 # uv — drop resolution/progress lines, keep the summary.
 [filters.uv]
 description = "uv: outcome only"

@@ -77,6 +77,20 @@ func buildCorpus() []corpusCase {
 	}
 	pip.WriteString("Installing collected packages: many\nSuccessfully installed all-the-things-1.0\n")
 
+	var pipList strings.Builder
+	pipList.WriteString("Package                  Version\n------------------------ ---------\n")
+	for i := 0; i < 250; i++ {
+		fmt.Fprintf(&pipList, "package-%03d              1.%d.%d\n", i, i%9, i%17)
+	}
+	pipList.WriteString("\n[notice] A new release of pip is available: 24.0 -> 24.1\n[notice] To update, run: pip install --upgrade pip\n")
+
+	var wgetOut strings.Builder
+	wgetOut.WriteString("--2026-07-16 12:00:00--  https://example.com/dataset.tar.gz\nResolving example.com (example.com)... 93.184.216.34\nConnecting to example.com (example.com)|93.184.216.34|:443... connected.\nHTTP request sent, awaiting response... 200 OK\nLength: 2097152000 (2.0G) [application/gzip]\nSaving to: 'dataset.tar.gz'\n\n")
+	for i := 0; i < 400; i++ {
+		fmt.Fprintf(&wgetOut, "%8dK .......... .......... .......... .......... .......... %2d%% %d.%02dM %ds\n", i*50, i*100/400, i%9+1, i%100, 400-i)
+	}
+	wgetOut.WriteString("\n2026-07-16 12:03:20 (10.5 MB/s) - 'dataset.tar.gz' saved [2097152000/2097152000]\n")
+
 	var dbuild strings.Builder
 	for i := 1; i <= 30; i++ {
 		fmt.Fprintf(&dbuild, "#%d [%d/30] RUN step-%d\n#%d DONE %d.%ds\n", i, i, i, i, i%9, i%10)
@@ -197,6 +211,8 @@ func buildCorpus() []corpusCase {
 		{"cargo build", cargo.String(), 90},
 		{"terraform plan", tfplan.String(), 75},
 		{"pip3 install -r requirements.txt", pip.String(), 85},
+		{"pip list", pipList.String(), 50},
+		{"wget https://example.com/dataset.tar.gz", wgetOut.String(), 90},
 		{"docker build -t app .", dbuild.String(), 90},
 		{"grep -rn 'err !=' internal/", grep.String(), 55},
 		{"curl -s https://example.com/docs", curl.String(), 50},
