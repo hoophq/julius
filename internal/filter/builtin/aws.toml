@@ -107,16 +107,17 @@ want = """
 }
 """
 
-# logs get-log-events / filter-log-events / tail — the message lines are
-# the payload. ingestionTime (when CloudWatch received the line) and
-# eventId are metadata noise; event timestamps are kept. The drop patterns
+# logs get-log-events / filter-log-events — the message lines are the
+# payload. ingestionTime (when CloudWatch received the line) and eventId
+# are metadata noise; event timestamps are kept. The drop patterns
 # require the trailing comma so only non-terminal fields are removed — a
 # metadata line that closes its object is kept, and the JSON stays
 # well-formed. tail keeps the newest events plus the paging tokens the
-# CLI prints at the end.
+# CLI prints at the end. logs tail is handled separately below: its
+# output is raw message text, so JSON-shaped drops must not touch it.
 [filters.aws-logs]
 description = "aws logs events: metadata noise dropped, newest kept"
-command = '^aws\s+logs\s+(get-log-events|filter-log-events|tail)\b'
+command = '^aws\s+logs\s+(get-log-events|filter-log-events)\b'
 strip_ansi = true
 drop_lines = [
   '^\s*"ingestionTime":\s*\d+,$',
@@ -175,6 +176,34 @@ want = """
     ],
     "nextForwardToken": "f/38391234567890123456789012345678901234567890123456789012"
 }
+"""
+
+# logs tail — prints raw log message lines, not JSON, so a payload line
+# that happens to look like event metadata is still payload. Cap only;
+# never drop lines.
+[filters.aws-logs-tail]
+description = "aws logs tail: capped, newest kept"
+command = '^aws\s+logs\s+tail\b'
+strip_ansi = true
+tail = 300
+
+[[filters.aws-logs-tail.tests]]
+name = "metadata-shaped payload lines preserved"
+input = """
+2026-07-17T12:01:33.000000+00:00 app/web/abc123 {
+    "level": "info",
+    "ingestionTime": 123,
+    "eventId": "456",
+}
+2026-07-17T12:01:34.000000+00:00 app/web/abc123 worker started
+"""
+want = """
+2026-07-17T12:01:33.000000+00:00 app/web/abc123 {
+    "level": "info",
+    "ingestionTime": 123,
+    "eventId": "456",
+}
+2026-07-17T12:01:34.000000+00:00 app/web/abc123 worker started
 """
 
 # cloudformation describe-stack-events — newest events come first, so a
