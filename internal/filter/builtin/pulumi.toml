@@ -86,6 +86,10 @@ Diagnostics:
 
 # pulumi up/destroy — transitional rows (creating/deleting…) restate what
 # the final rows already say; finals, Outputs, Resources and Duration stay.
+# No if_empty here: unlike preview/refresh there's no safe "no changes" ack
+# for a mutating run, and a real run's header line always survives — so an
+# all-dropped result is abnormal and falls back to raw via Finalize rather
+# than printing a success the exit code might contradict.
 [filters.pulumi-up]
 description = "pulumi up/destroy: results and summary only"
 command = '^pulumi\s+(up|destroy)\b'
@@ -98,7 +102,6 @@ drop_lines = [
   '^warning: A new version of Pulumi is available',
   '^\s*$',
 ]
-if_empty = "pulumi: done"
 
 [[filters.pulumi-up.tests]]
 name = "transitional rows dropped, results kept"
@@ -155,6 +158,18 @@ Diagnostics:
     error: 1 error occurred:
         * creating S3 Bucket (logs): BucketAlreadyExists
 Duration: 3s
+"""
+
+[[filters.pulumi-up.tests]]
+name = "all-noise failure falls back to raw, not a false success"
+exit_code = 1
+input = """
+@ updating....
+ +  aws:s3:Bucket logs creating
+"""
+want = """
+@ updating....
+ +  aws:s3:Bucket logs creating
 """
 
 # pulumi refresh — drift rows are the payload; "no changes" collapses to
@@ -219,10 +234,12 @@ Duration: 2s
 """
 
 # pulumi stack ls — state tables are dense already; cap runaway lists
-# (same treatment as docker ps). Does not match `pulumi stack output`.
+# (same treatment as docker ps). Anchored to the bare table form: does not
+# match `pulumi stack output`, and leaves `pulumi stack ls --json` to pass
+# through untouched (a head cap would truncate its JSON into invalid output).
 [filters.pulumi-stack-ls]
 description = "pulumi stack ls: capped table"
-command = '^pulumi\s+stack\s+ls\b'
+command = '^pulumi\s+stack\s+ls\s*$'
 strip_ansi = true
 head = 60
 
