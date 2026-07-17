@@ -50,11 +50,14 @@ ERROR: No matching distribution found for nonexistent-package-xyz
 """
 
 # pip list — the table is dense already; cap runaway environments and
-# drop the self-update nag. --outdated flows through the same filter.
+# drop the self-update nag. The [notice] nag prints to stderr, so
+# merge_stderr is required for the drop to reach it (as in pip-install).
+# --outdated flows through the same filter.
 [filters.pip-list]
 description = "pip list: capped package table"
 command = '^(pip3?|python3? -m pip)\s+list\b'
 strip_ansi = true
+merge_stderr = true
 drop_lines = [
   '^\[notice\]',
   '^\s*$',
