@@ -39,7 +39,7 @@ func wrap(argv []string) int {
 
 	raw := outc.Stdout
 	if s, ok := f.(*filter.Spec); ok && s.MergeStderr {
-		raw = outc.Stdout + outc.Stderr
+		raw = mergeStreams(outc.Stdout, outc.Stderr)
 	} else if outc.Stderr != "" {
 		os.Stderr.WriteString(outc.Stderr)
 	}
@@ -92,6 +92,18 @@ func record(ev ledger.HookEvent) {
 	}
 	defer l.Close()
 	_ = l.RecordHookEvent(ev)
+}
+
+// mergeStreams joins stdout and stderr for filters that opt into
+// merge_stderr. When stdout is non-empty but not newline-terminated (a
+// `wget -O-` body, a minified JSON payload), a separator is inserted so the
+// first stderr line can't glue onto the last stdout line — which would both
+// corrupt the output and defeat the line-based drop/keep patterns.
+func mergeStreams(stdout, stderr string) string {
+	if stdout != "" && stderr != "" && !strings.HasSuffix(stdout, "\n") {
+		return stdout + "\n" + stderr
+	}
+	return stdout + stderr
 }
 
 func slugOf(argv []string) string {
