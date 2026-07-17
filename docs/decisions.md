@@ -75,3 +75,61 @@ edits from the file content they read, and any rewriting of that content
 Savings on file reads come from session-level deduplication of repeated
 reads instead, where the agent already holds the identical content in
 context.
+
+## RTK generic-utility parity (ATR-144, 2026-07-17)
+
+Beyond its per-command filters, RTK ships generic wrappers — `rtk err`,
+`rtk summary`, `rtk json`, `rtk env -f`, `rtk deps`. julius's generic engine
+already covers part of this implicitly (repeated-line dedup, bounding), so
+each was a scope decision before an implementation. What julius adopts, and
+what it deliberately does not:
+
+**`json` — covered (generic).** A single JSON document on stdout is compacted
+by shape — arrays capped, long leaf values trimmed, null fields dropped, ids
+and urls protected — with an honest disclosure marker (`filter.CompactJSON`).
+It runs on unrecognized commands in both surfaces (the wrapper's fallback and
+the PostToolUse hook), and recognized JSON-emitting commands opt in per filter
+via `compact_json` (curl). This also shrinks minified single-line responses a
+line cap can't touch. Note the hook itself does no command recognition — it
+compacts any not-already-wrapped JSON stdout, relying on the PreToolUse
+rewrite to have routed recognized commands through their own filters; in a
+post-hook-only install, aws/kubectl `-o json` output would reach the generic
+compactor too.
+
+- *Won't cover: aws/kubectl `-o json`.* Their filters stay on conservative,
+  value-preserving line caps. Structural compaction reformats (sorts keys,
+  drops nulls, trims long values), which conflicts with the standing "never
+  reformat cloud/infra values" guideline — for those tools julius must add no
+  exposure and alter no value the command printed, so the line cap stands.
+
+**`err` — covered (wrapper only).** For an *unrecognized* command that exits
+non-zero, the wrapper trims stdout to its diagnostic signal — lines matching
+an error/warning pattern plus a bounded tail — instead of raw passthrough
+(`filter.ErrorsOnly`). The trim applies only when the full raw output was
+successfully stashed to disk with a pointer (tiny outputs and failed writes
+pass through raw instead), so nothing is ever lost.
+
+- *Won't cover: the PostToolUse/agent surface.* The Bash tool response carries
+  no exit code (verified shape: `{stdout, stderr, interrupted, isImage,
+  noOutputExpected}`), so the hook cannot tell success from failure. Inferring
+  it heuristically (stderr + error patterns) would drop legitimate output from
+  a command that merely printed the word "error" — a direct violation of the
+  never-lossy-where-it-matters guarantee. Errors-only therefore lives only
+  where the exit code is known.
+
+**`env` — won't cover.** The motivating win was redact-by-default for secret
+safety; that was descoped. Without redaction, bare `env`/`printenv` is a flat
+KEY=value list the agent explicitly asked to see, and line-capping it would
+hide requested variables for marginal savings. Passthrough — with the generic
+never-larger guard — is the honest default. Recorded as `wont-cover` in
+`catalog.toml`.
+
+**`summary` — won't cover.** A heuristic natural-language summary of arbitrary
+output is lossy by construction and can drop or distort the one line that
+mattered. julius compresses by removing known noise and bounding volume, never
+by paraphrasing.
+
+**`deps` — won't cover.** A dependency view is already delivered by the
+per-package-manager filters (npm/pnpm/yarn, pip, bundler, cargo, uv, …), each
+tuned to its tool's output. A generic `deps` wrapper would duplicate them with
+less precision.

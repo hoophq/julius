@@ -128,6 +128,6 @@ commands = [
   { cmd = "wget https://example.com/file.tar.gz", category = "network", filter = "wget" },
 
   # shell
-  { cmd = "env", category = "shell", status = "planned", ref = "ATR-144" },
-  { cmd = "printenv", category = "shell", status = "planned", ref = "ATR-144" },
+  { cmd = "env", category = "shell", status = "wont-cover", reason = "value redaction was descoped; without it, bare env/printenv is a KEY=value list the agent explicitly asked for, and line-capping would hide requested vars for marginal gain — passthrough with the generic never-larger guard is the honest default (ATR-144)" },
+  { cmd = "printenv", category = "shell", status = "wont-cover", reason = "value redaction was descoped; without it, bare env/printenv is a KEY=value list the agent explicitly asked for, and line-capping would hide requested vars for marginal gain — passthrough with the generic never-larger guard is the honest default (ATR-144)" },
 ]
