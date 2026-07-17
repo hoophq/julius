@@ -7,7 +7,7 @@
 # progress format is already terse; the savings are in failure-heavy runs.
 [filters.rspec]
 description = "rspec: failures and summary only"
-command = '(^|\s)rspec\b|^(bundle\s+exec\s+)?bin/rspec\b'
+command = '(^|\s)rspec(\s|$)|^(bundle\s+exec\s+)?bin/rspec(\s|$)'
 strip_ansi = true
 drop_lines = [
   '^Randomized with seed \d+',
@@ -124,7 +124,7 @@ Expected: 3
 # rubocop — offenses and the verdict; inspection progress dropped.
 [filters.rubocop]
 description = "rubocop: offenses and summary only"
-command = '(^|\s)rubocop\b'
+command = '(^|\s)rubocop(\s|$)'
 strip_ansi = true
 merge_stderr = true
 drop_lines = [

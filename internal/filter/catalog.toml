@@ -92,6 +92,7 @@ commands = [
   { cmd = "aws ec2 describe-instances", category = "cloud", filter = "aws-ec2" },
   { cmd = "aws lambda list-functions", category = "cloud", filter = "aws-lambda" },
   { cmd = "aws logs get-log-events --log-group-name app", category = "cloud", filter = "aws-logs" },
+  { cmd = "aws logs tail app --since 1h", category = "cloud", filter = "aws-logs-tail" },
   { cmd = "aws cloudformation describe-stack-events --stack-name app", category = "cloud", filter = "aws-cloudformation" },
   { cmd = "aws dynamodb scan --table-name users", category = "cloud", filter = "aws-dynamodb" },
   { cmd = "aws iam list-roles", category = "cloud", filter = "aws-iam" },
