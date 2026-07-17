@@ -14,7 +14,7 @@ import (
 )
 
 func newInitCmd() *cobra.Command {
-	var global, autoPatch, noPatch bool
+	var global, autoPatch, noPatch, mcp bool
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Register the julius hook with Claude Code",
@@ -31,12 +31,13 @@ func newInitCmd() *cobra.Command {
 				mode = install.PatchSkip
 			}
 			cwd, _ := os.Getwd()
-			return install.Init(global, mode, cwd, os.Stdin, os.Stdout)
+			return install.Init(global, mode, mcp, cwd, os.Stdin, os.Stdout)
 		},
 	}
 	cmd.Flags().BoolVarP(&global, "global", "g", false, "install into ~/.claude/settings.json instead of the project")
 	cmd.Flags().BoolVar(&autoPatch, "auto-patch", false, "write settings without prompting")
 	cmd.Flags().BoolVar(&noPatch, "no-patch", false, "print manual instructions only")
+	cmd.Flags().BoolVar(&mcp, "mcp", false, "also compress MCP tool outputs (extends the PostToolUse matcher with mcp__.*)")
 	return cmd
 }
 

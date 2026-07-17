@@ -60,6 +60,8 @@ julius integrates with Claude Code through two hooks:
 1. **Before a command runs**, julius rewrites it to run through the julius wrapper (`git status` → `julius git status`) — the wrapper executes the real command and filters its output. Your permission rules are respected: denied commands are never touched, ask-rules still prompt.
 2. **After a native tool runs** (Read, Grep, Glob, or an unwrapped command), julius compresses the result before it enters context: format-aware filtering for recognized outputs, repeated-line dedup for logs, session-level dedup for repeated reads.
 
+Opt-in, the same post hook can also compress **MCP tool outputs** (`julius init --mcp`): JSON results are compacted — null fields dropped, long lists capped, embedded documents truncated — with every removal disclosed in a marker line. Ids and urls always survive intact, error results and non-JSON text are never touched.
+
 Three guarantees hold everywhere:
 
 - **Never larger** — if filtering doesn't shrink the output, you get the original.

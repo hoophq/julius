@@ -28,13 +28,18 @@ type postToolUseInput struct {
 	ToolName     string          `json:"tool_name"`
 	CWD          string          `json:"cwd"`
 	ToolInput    json.RawMessage `json:"tool_input"`
-	ToolResponse map[string]any  `json:"tool_response"`
+	ToolResponse json.RawMessage `json:"tool_response"`
+
+	// response is ToolResponse decoded as an object — the shape of every
+	// native tool. MCP responses can be a bare content-block array instead
+	// and are decoded separately in processMCP.
+	response map[string]any
 }
 
 type postToolUseOutput struct {
 	HookSpecificOutput struct {
-		HookEventName     string         `json:"hookEventName"`
-		UpdatedToolOutput map[string]any `json:"updatedToolOutput"`
+		HookEventName     string `json:"hookEventName"`
+		UpdatedToolOutput any    `json:"updatedToolOutput"`
 	} `json:"hookSpecificOutput"`
 }
 
@@ -54,7 +59,15 @@ type Recorder func(ledger.HookEvent)
 // feeds exact-match edits downstream.
 func ProcessPostToolUse(r io.Reader, w io.Writer, reg *filter.Registry, rec Recorder) {
 	var in postToolUseInput
-	if err := json.NewDecoder(r).Decode(&in); err != nil || in.ToolResponse == nil {
+	if err := json.NewDecoder(r).Decode(&in); err != nil || len(in.ToolResponse) == 0 {
+		return
+	}
+
+	if strings.HasPrefix(in.ToolName, "mcp__") {
+		processMCP(in, w, rec)
+		return
+	}
+	if err := json.Unmarshal(in.ToolResponse, &in.response); err != nil || in.response == nil {
 		return
 	}
 
@@ -70,6 +83,83 @@ func ProcessPostToolUse(r io.Reader, w io.Writer, reg *filter.Registry, rec Reco
 		processRead(in, w, cache, rec)
 	}
 	session.PurgeOld()
+}
+
+// processMCP compresses MCP tool results (tool names mcp__<server>__<tool>;
+// these reach the hook only when the matcher was extended via
+// `julius init --mcp`). Two response shapes are handled:
+//
+//	array:  [{"type":"text","text":"..."}]
+//	object: {"content":[...blocks], "isError":bool}
+//
+// Only text blocks large enough to matter are rewritten, via CompactJSON —
+// non-JSON text passes through, so there is no risk of mangling prose.
+// Every other field and block survives verbatim, and error results are
+// never touched: errors matter, keep them whole.
+func processMCP(in postToolUseInput, w io.Writer, rec Recorder) {
+	var blocks []any
+	var wrapper map[string]any
+	if err := json.Unmarshal(in.ToolResponse, &blocks); err != nil {
+		if err := json.Unmarshal(in.ToolResponse, &wrapper); err != nil {
+			return
+		}
+		if isErr, _ := wrapper["isError"].(bool); isErr {
+			return
+		}
+		blocks, _ = wrapper["content"].([]any)
+	}
+	if len(blocks) == 0 {
+		return
+	}
+
+	newBlocks := make([]any, len(blocks))
+	var before, after int
+	changed := false
+	for i, b := range blocks {
+		newBlocks[i] = b
+		block, ok := b.(map[string]any)
+		if !ok {
+			continue
+		}
+		typ, _ := block["type"].(string)
+		text, _ := block["text"].(string)
+		if typ != "text" || len(text) < postMinBytes {
+			continue
+		}
+		res := filter.Finalize(text, filter.CompactJSON(text))
+		if !res.Applied || res.Output == text {
+			continue
+		}
+		nb := make(map[string]any, len(block))
+		for k, v := range block {
+			nb[k] = v
+		}
+		nb["text"] = res.Output
+		newBlocks[i] = nb
+		before += tokens.Estimate(text)
+		after += tokens.Estimate(res.Output)
+		changed = true
+	}
+	if !changed || after >= before {
+		return
+	}
+
+	var updated any = newBlocks
+	if wrapper != nil {
+		nw := make(map[string]any, len(wrapper))
+		for k, v := range wrapper {
+			nw[k] = v
+		}
+		nw["content"] = newBlocks
+		updated = nw
+	}
+	emitAny(w, updated)
+	if rec != nil {
+		rec(ledger.HookEvent{
+			SessionID: in.SessionID, Kind: "post_compress", Tool: in.ToolName, Command: in.ToolName,
+			TokensBefore: before, TokensAfter: after,
+		})
+	}
 }
 
 // processRead deduplicates repeated reads of the same file within a session.
@@ -92,7 +182,7 @@ func processRead(in postToolUseInput, w io.Writer, cache *session.Cache, rec Rec
 	if ti.Offset > 0 || ti.Limit > 0 || ti.FilePath == "" {
 		return
 	}
-	file, _ := in.ToolResponse["file"].(map[string]any)
+	file, _ := in.response["file"].(map[string]any)
 	content, _ := file["content"].(string)
 	if len(content) < postMinBytes {
 		return
@@ -130,7 +220,7 @@ func processRead(in postToolUseInput, w io.Writer, cache *session.Cache, rec Rec
 		newFile[k] = v
 	}
 	newFile["content"] = replacement
-	emit(w, in.ToolResponse, map[string]any{"file": newFile})
+	emit(w, in.response, map[string]any{"file": newFile})
 	if rec != nil {
 		rec(ledger.HookEvent{
 			SessionID: in.SessionID, Kind: "session_dedup", Tool: "Read", Command: "read " + ti.FilePath,
@@ -153,7 +243,7 @@ func processBash(in postToolUseInput, w io.Writer, reg *filter.Registry, cache *
 		}
 	}
 
-	stdout, _ := in.ToolResponse["stdout"].(string)
+	stdout, _ := in.response["stdout"].(string)
 	if len(stdout) < postMinBytes {
 		return
 	}
@@ -167,7 +257,7 @@ func processBash(in postToolUseInput, w io.Writer, reg *filter.Registry, cache *
 		marker := fmt.Sprintf(
 			"[julius] output is identical to the previous run of this command in this session (%d lines) — see the earlier result above.",
 			len(strings.Split(stdout, "\n")))
-		emit(w, in.ToolResponse, map[string]any{"stdout": marker})
+		emit(w, in.response, map[string]any{"stdout": marker})
 		if rec != nil {
 			rec(ledger.HookEvent{
 				SessionID: in.SessionID, Kind: "session_dedup", Tool: "Bash", Command: ti.Command,
@@ -193,7 +283,7 @@ func processBash(in postToolUseInput, w io.Writer, reg *filter.Registry, cache *
 		return
 	}
 
-	emit(w, in.ToolResponse, map[string]any{"stdout": compressed})
+	emit(w, in.response, map[string]any{"stdout": compressed})
 	if rec != nil {
 		rec(ledger.HookEvent{
 			SessionID: in.SessionID, Kind: "post_compress", Tool: "Bash", Command: ti.Command,
@@ -203,8 +293,8 @@ func processBash(in postToolUseInput, w io.Writer, reg *filter.Registry, cache *
 }
 
 func processGrep(in postToolUseInput, w io.Writer, rec Recorder) {
-	mode, _ := in.ToolResponse["mode"].(string)
-	content, _ := in.ToolResponse["content"].(string)
+	mode, _ := in.response["mode"].(string)
+	content, _ := in.response["content"].(string)
 	if mode != "content" || len(content) < postMinBytes {
 		return
 	}
@@ -216,7 +306,7 @@ func processGrep(in postToolUseInput, w io.Writer, rec Recorder) {
 	capped := append(lines[:grepMaxLines], fmt.Sprintf("[julius] +%d more match lines omitted", omitted))
 	newContent := strings.Join(capped, "\n")
 
-	emit(w, in.ToolResponse, map[string]any{
+	emit(w, in.response, map[string]any{
 		"content":  newContent,
 		"numLines": len(capped),
 	})
@@ -233,14 +323,14 @@ func processGrep(in postToolUseInput, w io.Writer, rec Recorder) {
 }
 
 func processGlob(in postToolUseInput, w io.Writer, rec Recorder) {
-	files, _ := in.ToolResponse["filenames"].([]any)
+	files, _ := in.response["filenames"].([]any)
 	if len(files) <= globMaxFiles {
 		return
 	}
 	before := fmt.Sprintf("%v", files)
 	capped := files[:globMaxFiles]
 
-	emit(w, in.ToolResponse, map[string]any{
+	emit(w, in.response, map[string]any{
 		"filenames": capped,
 		"numFiles":  len(capped),
 		"truncated": true,
@@ -267,6 +357,12 @@ func emit(w io.Writer, response, overrides map[string]any) {
 	for k, v := range overrides {
 		updated[k] = v
 	}
+	emitAny(w, updated)
+}
+
+// emitAny writes updatedToolOutput of any shape — MCP responses can be a
+// bare content-block array, not an object.
+func emitAny(w io.Writer, updated any) {
 	var out postToolUseOutput
 	out.HookSpecificOutput.HookEventName = "PostToolUse"
 	out.HookSpecificOutput.UpdatedToolOutput = updated
