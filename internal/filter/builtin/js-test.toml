@@ -1,7 +1,7 @@
 # jest / vitest — keep failures and the run summary, drop pass noise.
 [filters.js-test]
 description = "jest/vitest: failures and summary only"
-command = '(^|\s)(jest|vitest)\b|^(npx|pnpm|npm run|yarn)\s+(jest|vitest|test)\b'
+command = '(^|\s)(jest|vitest)\b|^(npx|pnpm|npm run|yarn)\s+(jest|vitest)\b'
 detect_output = ['^Test Suites: \d+', '^(PASS|FAIL) \S+\.(test|spec)\.[jt]sx?']
 strip_ansi = true
 merge_stderr = true
