@@ -1,0 +1,240 @@
+# Pulumi — same secret-safety bar as the AWS pack: drops are unambiguous
+# progress noise only (spinner ticks, transitional resource rows, plugin
+# chatter), values pass through untouched, never summarized or reformatted.
+# `pulumi stack output` is deliberately unfiltered (wont-cover in the
+# catalog): outputs are small payload that can carry secret values with
+# --show-secrets, and passthrough guarantees julius never re-surfaces them.
+#
+# Transitional-row drops are anchored to the resource-row shape (leading
+# whitespace, optional +/-/~ sign, a pkg:mod:Type URN token, colon-free name
+# segments, trailing state word) so diagnostics that merely mention a state
+# word — including "creating failed" rows — always survive.
+
+# pulumi preview — the plan rows are the payload, like terraform plan's
+# diff blocks; only streaming chatter goes.
+[filters.pulumi-preview]
+description = "pulumi preview: plan and summary only"
+command = '^pulumi\s+pre(view)?\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^@ (previewing|updating|destroying|refreshing)',
+  '^\s+([+~-]{1,2}\s+)?[\w-]+:[\w.-]+:\S+(\s[^:\s]+)*\s(creating|updating|deleting|replacing|reading|running|refreshing)\s*$',
+  '^Downloading plugin ',
+  '^warning: A new version of Pulumi is available',
+  '^\s*$',
+]
+if_empty = "pulumi preview: no changes"
+
+[[filters.pulumi-preview.tests]]
+name = "spinner ticks dropped, plan and summary kept"
+input = """
+Previewing update (dev):
+
+@ previewing update....
+ +  pulumi:pulumi:Stack proj-dev create
+ +  aws:s3:Bucket logs create
+@ previewing update.....
+
+Resources:
+    + 2 to create
+"""
+want = """
+Previewing update (dev):
+ +  pulumi:pulumi:Stack proj-dev create
+ +  aws:s3:Bucket logs create
+Resources:
+    + 2 to create
+"""
+
+[[filters.pulumi-preview.tests]]
+name = "no changes collapses to the summary"
+input = """
+Previewing update (dev):
+
+@ previewing update....
+    pulumi:pulumi:Stack proj-dev running
+
+Resources:
+    2 unchanged
+"""
+want = """
+Previewing update (dev):
+Resources:
+    2 unchanged
+"""
+
+[[filters.pulumi-preview.tests]]
+name = "diagnostics survive"
+exit_code = 1
+input = """
+Previewing update (dev):
+
+@ previewing update....
+
+Diagnostics:
+  aws:s3:Bucket (logs):
+    error: creating S3 Bucket (logs): api error BucketAlreadyExists
+
+"""
+want = """
+Previewing update (dev):
+Diagnostics:
+  aws:s3:Bucket (logs):
+    error: creating S3 Bucket (logs): api error BucketAlreadyExists
+"""
+
+# pulumi up/destroy — transitional rows (creating/deleting…) restate what
+# the final rows already say; finals, Outputs, Resources and Duration stay.
+[filters.pulumi-up]
+description = "pulumi up/destroy: results and summary only"
+command = '^pulumi\s+(up|destroy)\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^@ (previewing|updating|destroying|refreshing)',
+  '^\s+([+~-]{1,2}\s+)?[\w-]+:[\w.-]+:\S+(\s[^:\s]+)*\s(creating|updating|deleting|replacing|reading|running|refreshing)\s*$',
+  '^Downloading plugin ',
+  '^warning: A new version of Pulumi is available',
+  '^\s*$',
+]
+if_empty = "pulumi: done"
+
+[[filters.pulumi-up.tests]]
+name = "transitional rows dropped, results kept"
+input = """
+Updating (dev):
+
+@ updating....
+ +  pulumi:pulumi:Stack proj-dev creating
+ +  aws:s3:Bucket logs creating
+@ updating.....
+ +  aws:s3:Bucket logs created
+ +  pulumi:pulumi:Stack proj-dev created
+
+Outputs:
+    bucketName: "logs-58c9161"
+
+Resources:
+    + 2 created
+
+Duration: 8s
+"""
+want = """
+Updating (dev):
+ +  aws:s3:Bucket logs created
+ +  pulumi:pulumi:Stack proj-dev created
+Outputs:
+    bucketName: "logs-58c9161"
+Resources:
+    + 2 created
+Duration: 8s
+"""
+
+[[filters.pulumi-up.tests]]
+name = "failed rows and diagnostics survive"
+exit_code = 1
+input = """
+Updating (dev):
+
+@ updating....
+ +  aws:s3:Bucket logs creating
+ +  aws:s3:Bucket logs creating failed
+Diagnostics:
+  aws:s3:Bucket (logs):
+    error: 1 error occurred:
+        * creating S3 Bucket (logs): BucketAlreadyExists
+
+Duration: 3s
+"""
+want = """
+Updating (dev):
+ +  aws:s3:Bucket logs creating failed
+Diagnostics:
+  aws:s3:Bucket (logs):
+    error: 1 error occurred:
+        * creating S3 Bucket (logs): BucketAlreadyExists
+Duration: 3s
+"""
+
+# pulumi refresh — drift rows are the payload; "no changes" collapses to
+# Pulumi's own unchanged summary.
+[filters.pulumi-refresh]
+description = "pulumi refresh: drift and summary only"
+command = '^pulumi\s+refresh\b'
+strip_ansi = true
+merge_stderr = true
+drop_lines = [
+  '^@ (previewing|updating|destroying|refreshing)',
+  '^\s+([+~-]{1,2}\s+)?[\w-]+:[\w.-]+:\S+(\s[^:\s]+)*\s(creating|updating|deleting|replacing|reading|running|refreshing)\s*$',
+  '^Downloading plugin ',
+  '^warning: A new version of Pulumi is available',
+  '^\s*$',
+]
+if_empty = "pulumi refresh: no changes"
+
+[[filters.pulumi-refresh.tests]]
+name = "no drift collapses to the summary"
+input = """
+Refreshing (dev):
+
+@ refreshing....
+ ~  aws:s3:Bucket logs refreshing
+    pulumi:pulumi:Stack proj-dev running
+
+Resources:
+    2 unchanged
+
+Duration: 2s
+"""
+want = """
+Refreshing (dev):
+Resources:
+    2 unchanged
+Duration: 2s
+"""
+
+[[filters.pulumi-refresh.tests]]
+name = "drift rows kept"
+input = """
+Refreshing (dev):
+
+@ refreshing....
+ ~  aws:s3:Bucket logs refreshing
+ ~  aws:s3:Bucket logs updated
+
+Resources:
+    ~ 1 updated
+    1 unchanged
+
+Duration: 2s
+"""
+want = """
+Refreshing (dev):
+ ~  aws:s3:Bucket logs updated
+Resources:
+    ~ 1 updated
+    1 unchanged
+Duration: 2s
+"""
+
+# pulumi stack ls — state tables are dense already; cap runaway lists
+# (same treatment as docker ps). Does not match `pulumi stack output`.
+[filters.pulumi-stack-ls]
+description = "pulumi stack ls: capped table"
+command = '^pulumi\s+stack\s+ls\b'
+strip_ansi = true
+head = 60
+
+[[filters.pulumi-stack-ls.tests]]
+name = "short stack table unchanged"
+input = """
+NAME   LAST UPDATE     RESOURCE COUNT  URL
+dev*   4 minutes ago   12              https://app.pulumi.com/acme/proj/dev
+prod   2 days ago      12              https://app.pulumi.com/acme/proj/prod
+"""
+want = """
+NAME   LAST UPDATE     RESOURCE COUNT  URL
+dev*   4 minutes ago   12              https://app.pulumi.com/acme/proj/dev
+prod   2 days ago      12              https://app.pulumi.com/acme/proj/prod
+"""

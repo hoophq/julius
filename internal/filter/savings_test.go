@@ -71,6 +71,13 @@ func buildCorpus() []corpusCase {
 	}
 	tfplan.WriteString("\nTerraform will perform the following actions:\n\n  # aws_s3_bucket.logs will be created\n  + resource \"aws_s3_bucket\" \"logs\" {\n      + bucket = \"my-logs\"\n    }\n\nPlan: 1 to add, 0 to change, 0 to destroy.\n")
 
+	var pulumiUp strings.Builder
+	pulumiUp.WriteString("Updating (dev):\n\n")
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&pulumiUp, "@ updating....\n +  aws:s3:Bucket bucket-%02d creating\n +  aws:s3:Bucket bucket-%02d created\n", i, i)
+	}
+	pulumiUp.WriteString("\nOutputs:\n    endpoint: \"https://svc.example.com\"\n\nResources:\n    + 40 created\n\nDuration: 42s\n")
+
 	var pip strings.Builder
 	for i := 0; i < 20; i++ {
 		fmt.Fprintf(&pip, "Collecting package-%02d\n  Downloading package_%02d-1.%d.0-py3-none-any.whl (%d kB)\n", i, i, i%7, i*13+40)
@@ -196,6 +203,7 @@ func buildCorpus() []corpusCase {
 		{"npx jest", jest.String(), 85},
 		{"cargo build", cargo.String(), 90},
 		{"terraform plan", tfplan.String(), 75},
+		{"pulumi up --yes", pulumiUp.String(), 50},
 		{"pip3 install -r requirements.txt", pip.String(), 85},
 		{"docker build -t app .", dbuild.String(), 90},
 		{"grep -rn 'err !=' internal/", grep.String(), 55},
