@@ -222,8 +222,9 @@ func buildCorpus() []corpusCase {
 // at least 60% of tokens on average across representative outputs.
 func TestCorpusSavings(t *testing.T) {
 	reg := Load(t.TempDir()) // no project/user tiers: builtins only
+	corpus := buildCorpus()
 	var total float64
-	for _, c := range buildCorpus() {
+	for _, c := range corpus {
 		f := reg.Pick(c.cmd)
 		if f == nil {
 			t.Fatalf("no filter for corpus command %q", c.cmd)
@@ -237,7 +238,7 @@ func TestCorpusSavings(t *testing.T) {
 		}
 		total += saved
 	}
-	avg := total / float64(len(buildCorpus()))
+	avg := total / float64(len(corpus))
 	t.Logf("average savings: %.1f%%", avg)
 	if avg < 60 {
 		t.Errorf("average corpus savings %.1f%%, acceptance floor is 60%%", avg)
