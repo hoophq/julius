@@ -16,14 +16,17 @@ type File struct {
 
 // Spec is a declarative filter. Stages run in this order:
 //
-//	strip_ansi → replace → respond → keep_lines → drop_lines →
-//	max_line_length → head/tail → if_empty
+//	strip_ansi → compact_json → replace → respond → keep_lines →
+//	drop_lines → max_line_length → head/tail → if_empty
+//
+// compact_json short-circuits the remaining stages when the body is JSON.
 type Spec struct {
 	Description  string        `toml:"description"`
 	Command      string        `toml:"command"`       // regex matched against the command line
 	DetectOutput []string      `toml:"detect_output"` // regexes matched against raw OUTPUT (content sniffing)
 	StripANSI    bool          `toml:"strip_ansi"`
 	MergeStderr  bool          `toml:"merge_stderr"`
+	CompactJSON  bool          `toml:"compact_json"` // structurally compact a JSON body before the line stages
 	Replace      []Replacement `toml:"replace"`
 	Respond      []Responder   `toml:"respond"`
 	KeepLines    []string      `toml:"keep_lines"`
@@ -171,6 +174,16 @@ func (s *Spec) Apply(raw string, exitCode int) Result {
 	out := strings.ReplaceAll(raw, "\r\n", "\n")
 	if s.StripANSI {
 		out = ansiRe.ReplaceAllString(out, "")
+	}
+
+	// A JSON body is compacted by shape (arrays capped, long values trimmed),
+	// not by line drops that would corrupt it, so it short-circuits the
+	// line-based stages below. Non-JSON output (an HTML page, an error body)
+	// finds no JSON to compact and falls through to the normal pipeline.
+	if s.CompactJSON {
+		if r := CompactJSON(out); r.Applied {
+			return r
+		}
 	}
 
 	if len(s.replRe) > 0 {

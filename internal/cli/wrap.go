@@ -30,13 +30,9 @@ func wrap(argv []string) int {
 		return outc.ExitCode
 	}
 
-	if f == nil {
-		// Passthrough: julius has no filter for this command.
-		os.Stdout.WriteString(outc.Stdout)
-		os.Stderr.WriteString(outc.Stderr)
-		return outc.ExitCode
-	}
-
+	// stderr: a spec can opt into merging it into the filtered text; otherwise
+	// (including every unrecognized command, which has no spec) it passes
+	// through untouched.
 	raw := outc.Stdout
 	if s, ok := f.(*filter.Spec); ok && s.MergeStderr {
 		raw = mergeStreams(outc.Stdout, outc.Stderr)
@@ -44,22 +40,50 @@ func wrap(argv []string) int {
 		os.Stderr.WriteString(outc.Stderr)
 	}
 
-	res := filter.Finalize(raw, f.Apply(raw, outc.ExitCode))
-	output := strings.TrimRight(res.Output, "\n")
-
-	var rawPath string
+	// On failure, stash the full raw output before filtering: the
+	// errors-only trim below is only safe when what it drops stays
+	// recoverable on disk, and Stash declines tiny outputs and can fail.
+	var stashHint string
 	if outc.ExitCode != 0 {
 		full := outc.Stdout
 		if outc.Stderr != "" {
 			full += "\n--- stderr ---\n" + outc.Stderr
 		}
-		if hint := execx.Stash(full, slugOf(argv), time.Now()); hint != "" {
-			rawPath = strings.TrimPrefix(hint, "[julius] raw output: ")
-			if output != "" {
-				output += "\n"
-			}
-			output += hint
+		stashHint = execx.Stash(full, slugOf(argv), time.Now())
+	}
+
+	// Unrecognized commands fall back to the generic engine: keep the
+	// diagnostic signal when they fail, compact a JSON payload when they
+	// succeed. A recognized command uses its own filter.
+	var res filter.Result
+	switch {
+	case f != nil:
+		res = filter.Finalize(raw, f.Apply(raw, outc.ExitCode))
+	case outc.ExitCode != 0 && stashHint != "":
+		res = filter.Finalize(raw, filter.ErrorsOnly(raw))
+	case outc.ExitCode != 0:
+		// No stash means the trim would lose lines unrecoverably.
+		res = filter.Result{Output: raw}
+	default:
+		res = filter.Finalize(raw, filter.CompactJSON(raw))
+	}
+
+	// No filter matched and the generic engine found nothing to compress:
+	// pure passthrough, and don't log a no-op to the savings ledger.
+	if f == nil && !res.Applied {
+		os.Stdout.WriteString(outc.Stdout)
+		return outc.ExitCode
+	}
+
+	output := strings.TrimRight(res.Output, "\n")
+
+	var rawPath string
+	if stashHint != "" {
+		rawPath = strings.TrimPrefix(stashHint, "[julius] raw output: ")
+		if output != "" {
+			output += "\n"
 		}
+		output += stashHint
 	}
 
 	if output != "" {

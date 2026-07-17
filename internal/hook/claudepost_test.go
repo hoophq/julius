@@ -143,6 +143,33 @@ func TestPostBashDedupFallback(t *testing.T) {
 	}
 }
 
+func TestPostBashCompactsJSON(t *testing.T) {
+	// A JSON array payload from an unrecognized command (no builtin filter).
+	items := make([]string, 40)
+	for i := range items {
+		items[i] = fmt.Sprintf(`{"id":"item-%02d","note":"padding text to make this worth compacting %d"}`, i, i)
+	}
+	payload := `{"items":[` + strings.Join(items, ",") + `]}`
+
+	updated := runPost(t, bashEvent(t.Name(), "someapi list --json", payload), nil)
+	if updated == nil {
+		t.Fatal("expected JSON compaction")
+	}
+	stdout := updated["stdout"].(string)
+	if !strings.Contains(stdout, "compacted JSON") {
+		t.Errorf("missing JSON disclosure marker:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "[julius] filtered:") {
+		t.Errorf("JSON path must not also add the line-count marker:\n%s", stdout)
+	}
+	if strings.Contains(stdout, `"item-39"`) {
+		t.Error("array items past the cap survived")
+	}
+	if !strings.Contains(stdout, `"item-00"`) {
+		t.Error("array items within the cap were lost")
+	}
+}
+
 func TestPostGrepContentCap(t *testing.T) {
 	var lines []string
 	for i := 0; i < 400; i++ {

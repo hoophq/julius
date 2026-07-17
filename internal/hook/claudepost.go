@@ -267,8 +267,17 @@ func processBash(in postToolUseInput, w io.Writer, reg *filter.Registry, cache *
 		return
 	}
 
+	// JSON on stdout is compacted by shape and carries its own disclosure
+	// marker, so it skips the generic line-count marker below. A compaction
+	// Finalize rejects deliberately does NOT fall through to the branches
+	// below: line-based dedup on a JSON document would corrupt it. Otherwise
+	// a content-sniffed format filter runs, then repeated-line dedup.
 	var res filter.Result
-	if s := reg.Sniff(stdout); s != nil {
+	jsonCompacted := false
+	if j := filter.CompactJSON(stdout); j.Applied {
+		res = filter.Finalize(stdout, j)
+		jsonCompacted = true
+	} else if s := reg.Sniff(stdout); s != nil {
 		res = filter.Finalize(stdout, s.Apply(stdout, 0))
 	} else {
 		res = filter.Finalize(stdout, filter.DedupRepeats(stdout))
@@ -277,8 +286,11 @@ func processBash(in postToolUseInput, w io.Writer, reg *filter.Registry, cache *
 		return
 	}
 
-	before, after := lineCounts(stdout, res.Output)
-	compressed := res.Output + fmt.Sprintf("\n[julius] filtered: %d→%d lines", before, after)
+	compressed := res.Output
+	if !jsonCompacted {
+		before, after := lineCounts(stdout, res.Output)
+		compressed += fmt.Sprintf("\n[julius] filtered: %d→%d lines", before, after)
+	}
 	if tokens.Estimate(compressed) >= tokens.Estimate(stdout) {
 		return
 	}
