@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
+	"github.com/hoophq/julius/internal/execx"
 	"github.com/hoophq/julius/internal/filter"
 	"github.com/hoophq/julius/internal/ledger"
 	"github.com/hoophq/julius/internal/router"
@@ -24,11 +26,14 @@ const (
 )
 
 type postToolUseInput struct {
-	SessionID    string          `json:"session_id"`
-	ToolName     string          `json:"tool_name"`
-	CWD          string          `json:"cwd"`
-	ToolInput    json.RawMessage `json:"tool_input"`
-	ToolResponse json.RawMessage `json:"tool_response"`
+	SessionID      string          `json:"session_id"`
+	ToolUseID      string          `json:"tool_use_id"`
+	AgentID        string          `json:"agent_id"`
+	TranscriptPath string          `json:"transcript_path"`
+	ToolName       string          `json:"tool_name"`
+	CWD            string          `json:"cwd"`
+	ToolInput      json.RawMessage `json:"tool_input"`
+	ToolResponse   json.RawMessage `json:"tool_response"`
 
 	// response is ToolResponse decoded as an object — the shape of every
 	// native tool. MCP responses can be a bare content-block array instead
@@ -71,7 +76,7 @@ func ProcessPostToolUse(r io.Reader, w io.Writer, reg *filter.Registry, rec Reco
 		return
 	}
 
-	cache := session.Open(in.SessionID)
+	cache := session.Open(session.ScopeID(in.SessionID, in.AgentID, in.TranscriptPath))
 	switch in.ToolName {
 	case "Bash":
 		processBash(in, w, reg, cache, rec)
@@ -189,31 +194,50 @@ func processRead(in postToolUseInput, w io.Writer, cache *session.Cache, rec Rec
 	}
 
 	key := "read:" + ti.FilePath
-	prev, seen := cache.Load(key)
-	cache.Store(key, []byte(content))
-	if !seen {
+	d := cache.Decide(key, []byte(content), in.ToolUseID)
+	if d.SameEvent {
+		// Duplicate invocation of the same hook event (settings.json and a
+		// plugin can both register it): the first invocation's decision stands.
 		return
+	}
+	verbatim := session.Entry{
+		Content: []byte(content), Form: session.FormVerbatim,
+		ToolUseID: in.ToolUseID, Time: time.Now(),
 	}
 
 	var replacement string
-	switch {
-	case string(prev) == content:
+	form := session.FormVerbatim
+	switch d.Verdict {
+	case session.VerdictPass:
+		cache.Commit(key, verbatim)
+		return
+	case session.VerdictSuppress:
+		// Suppressing verbatim-seen content does not downgrade the form:
+		// the referent from the earlier read is still in context.
 		replacement = fmt.Sprintf(
 			"[julius] %s is unchanged since your last read in this session (%d lines) — the full content is already in context above. Re-read with offset/limit to force full output.",
 			ti.FilePath, len(strings.Split(content, "\n")))
-	default:
-		d, ok := session.Diff(string(prev), content)
+	case session.VerdictDiff:
+		diff, ok := session.Diff(string(d.Prev.Content), content)
 		newLines := len(strings.Split(content, "\n"))
-		if !ok || len(strings.Split(d, "\n"))*10 > newLines*4 { // diff > 40% of file
+		if !ok || len(strings.Split(diff, "\n"))*10 > newLines*4 { // diff > 40% of file
+			cache.Commit(key, verbatim)
 			return
 		}
 		replacement = fmt.Sprintf(
 			"[julius] %s changed since your last read — diff against the version in context above (-old/+new). Re-read with offset/limit to force full output.\n%s",
-			ti.FilePath, d)
+			ti.FilePath, diff)
+		// FormDiff: the next identical read re-emits full content and
+		// re-anchors the dedup chain on a verbatim referent.
+		form = session.FormDiff
 	}
 	if tokens.Estimate(replacement) >= tokens.Estimate(content) {
+		cache.Commit(key, verbatim)
 		return
 	}
+	entry := verbatim
+	entry.Form = form
+	cache.Commit(key, entry)
 
 	newFile := make(map[string]any, len(file))
 	for k, v := range file {
@@ -248,23 +272,49 @@ func processBash(in postToolUseInput, w io.Writer, reg *filter.Registry, cache *
 		return
 	}
 
-	// Identical re-run of the same command in this session: the agent
-	// already holds this exact output in context.
 	key := "bash:" + ti.Command
-	prev, seen := cache.Load(key)
-	cache.Store(key, []byte(stdout))
-	if seen && string(prev) == stdout {
-		marker := fmt.Sprintf(
-			"[julius] output is identical to the previous run of this command in this session (%d lines) — see the earlier result above.",
-			len(strings.Split(stdout, "\n")))
-		emit(w, in.response, map[string]any{"stdout": marker})
-		if rec != nil {
-			rec(ledger.HookEvent{
-				SessionID: in.SessionID, Kind: "session_dedup", Tool: "Bash", Command: ti.Command,
-				TokensBefore: tokens.Estimate(stdout), TokensAfter: tokens.Estimate(marker),
-			})
-		}
+	d := cache.Decide(key, []byte(stdout), in.ToolUseID)
+	if d.SameEvent {
+		// Duplicate invocation of the same hook event (settings.json and a
+		// plugin can both register it): the first invocation's decision stands.
 		return
+	}
+	verbatim := session.Entry{
+		Content: []byte(stdout), Form: session.FormVerbatim,
+		ToolUseID: in.ToolUseID, Time: time.Now(),
+	}
+
+	// Identical re-run of a command whose output the agent saw verbatim:
+	// suppress, but only with the raw output stashed on disk first — a
+	// marker must never be a pointer-less dead end. Stash failure falls
+	// through to the filter path. VerdictDiff has no Bash diff feature and
+	// falls through as well.
+	if d.Verdict == session.VerdictSuppress {
+		fields := strings.Fields(ti.Command)
+		if len(fields) > 2 {
+			fields = fields[:2]
+		}
+		if hint := execx.Stash(stdout, strings.Join(fields, "-"), time.Now()); hint != "" {
+			marker := fmt.Sprintf(
+				"[julius] output is identical to the previous run of this command in this session (%d lines) — see the earlier result above.",
+				len(strings.Split(stdout, "\n")))
+			rawPath := strings.TrimPrefix(hint, "[julius] raw output: ")
+			// The agent receives marker + pointer line; the ledger must
+			// account for exactly what was emitted, not just the marker.
+			emitted := marker + "\n" + hint
+			emit(w, in.response, map[string]any{"stdout": emitted})
+			entry := verbatim
+			entry.StashPath = rawPath
+			cache.Commit(key, entry)
+			if rec != nil {
+				rec(ledger.HookEvent{
+					SessionID: in.SessionID, Kind: "session_dedup", Tool: "Bash", Command: ti.Command,
+					TokensBefore: tokens.Estimate(stdout), TokensAfter: tokens.Estimate(emitted),
+					RawPath: rawPath,
+				})
+			}
+			return
+		}
 	}
 
 	// JSON on stdout is compacted by shape and carries its own disclosure
@@ -283,6 +333,7 @@ func processBash(in postToolUseInput, w io.Writer, reg *filter.Registry, cache *
 		res = filter.Finalize(stdout, filter.DedupRepeats(stdout))
 	}
 	if !res.Applied || res.Output == stdout {
+		cache.Commit(key, verbatim)
 		return
 	}
 
@@ -292,9 +343,13 @@ func processBash(in postToolUseInput, w io.Writer, reg *filter.Registry, cache *
 		compressed += fmt.Sprintf("\n[julius] filtered: %d→%d lines", before, after)
 	}
 	if tokens.Estimate(compressed) >= tokens.Estimate(stdout) {
+		cache.Commit(key, verbatim)
 		return
 	}
 
+	entry := verbatim
+	entry.Form = session.FormFiltered
+	cache.Commit(key, entry)
 	emit(w, in.response, map[string]any{"stdout": compressed})
 	if rec != nil {
 		rec(ledger.HookEvent{

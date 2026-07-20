@@ -5,15 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/hoophq/julius/internal/filter"
 	"github.com/hoophq/julius/internal/ledger"
+	"github.com/hoophq/julius/internal/session"
 	"github.com/hoophq/julius/internal/tokens"
 )
 
-// TestMain isolates the session cache from the developer's real one.
+// TestMain isolates the session cache and raw-output stash from the
+// developer's real ones.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "julius-hook-sessions-*")
 	if err != nil {
@@ -22,8 +25,16 @@ func TestMain(m *testing.M) {
 	if err := os.Setenv("JULIUS_SESSION_DIR", dir); err != nil {
 		panic(err)
 	}
+	rawDir, err := os.MkdirTemp("", "julius-hook-raw-*")
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("JULIUS_RAW_DIR", rawDir); err != nil {
+		panic(err)
+	}
 	code := m.Run()
 	_ = os.RemoveAll(dir)
+	_ = os.RemoveAll(rawDir)
 	os.Exit(code)
 }
 
@@ -50,24 +61,39 @@ func runPost(t *testing.T, input string, rec Recorder) map[string]any {
 	return parsed.HookSpecificOutput.UpdatedToolOutput
 }
 
+// bashEvent builds a legacy payload without tool_use_id — older Claude Code
+// versions omit the field and dedup must still work for them.
 func bashEvent(sid, command, stdout string) string {
-	b, _ := json.Marshal(map[string]any{
+	return bashEventID(sid, "", command, stdout)
+}
+
+func bashEventID(sid, toolUseID, command, stdout string) string {
+	ev := map[string]any{
 		"session_id": sid, "tool_name": "Bash",
 		"tool_input": map[string]any{"command": command},
 		"tool_response": map[string]any{
 			"stdout": stdout, "stderr": "", "interrupted": false,
 			"isImage": false, "noOutputExpected": false,
 		},
-	})
+	}
+	if toolUseID != "" {
+		ev["tool_use_id"] = toolUseID
+	}
+	b, _ := json.Marshal(ev)
 	return string(b)
 }
 
+// readEvent builds a legacy payload without tool_use_id.
 func readEvent(sid, path, content string, offset int) string {
+	return readEventID(sid, "", path, content, offset)
+}
+
+func readEventID(sid, toolUseID, path, content string, offset int) string {
 	ti := map[string]any{"file_path": path}
 	if offset > 0 {
 		ti["offset"] = offset
 	}
-	b, _ := json.Marshal(map[string]any{
+	ev := map[string]any{
 		"session_id": sid, "tool_name": "Read", "tool_input": ti,
 		"tool_response": map[string]any{
 			"type": "text",
@@ -77,7 +103,11 @@ func readEvent(sid, path, content string, offset int) string {
 				"totalLines": len(strings.Split(content, "\n")),
 			},
 		},
-	})
+	}
+	if toolUseID != "" {
+		ev["tool_use_id"] = toolUseID
+	}
+	b, _ := json.Marshal(ev)
 	return string(b)
 }
 
@@ -311,13 +341,24 @@ func TestPostReadFullContentOnBigChange(t *testing.T) {
 
 func TestPostReadPartialReadBypasses(t *testing.T) {
 	content := bigFile("v1")
-	runPost(t, readEvent(t.Name(), "/app/h.go", content, 0), nil)
-	if u := runPost(t, readEvent(t.Name(), "/app/h.go", content, 10), nil); u != nil {
+	if u := runPost(t, readEventID(t.Name(), "toolu_01", "/app/h.go", content, 0), nil); u != nil {
+		t.Fatalf("first full read must pass through, got %v", u)
+	}
+	// The offset event carries the full content in its payload; the bypass
+	// must neither rewrite the output nor touch the cached entry.
+	if u := runPost(t, readEventID(t.Name(), "toolu_02", "/app/h.go", content, 10), nil); u != nil {
 		t.Errorf("offset read must bypass dedup, got %v", u)
 	}
-	// and the bypass must not have poisoned the cache: full re-read still dedups
-	if u := runPost(t, readEvent(t.Name(), "/app/h.go", content, 0), nil); u == nil {
-		t.Error("full re-read after partial read must still dedup")
+	// Strongest observable proof the offset read neither poisoned nor reset
+	// the entry: a full re-read under a fresh tool_use_id still suppresses
+	// with an explicit unchanged marker against the toolu_01 referent.
+	u := runPost(t, readEventID(t.Name(), "toolu_03", "/app/h.go", content, 0), nil)
+	if u == nil {
+		t.Fatal("full re-read after partial read must still dedup")
+	}
+	replaced := u["file"].(map[string]any)["content"].(string)
+	if !strings.Contains(replaced, "unchanged since your last read") {
+		t.Errorf("bad marker after partial-read bypass: %q", replaced)
 	}
 }
 
@@ -329,21 +370,328 @@ func TestPostReadCrossSessionIsolated(t *testing.T) {
 	}
 }
 
-func TestPostBashIdenticalRerunDedups(t *testing.T) {
+// uniqueProse is ~600B that no filter path touches: unique lines defeat
+// repeat-dedup, no sniffer pattern matches, and it is not JSON — so the
+// Bash hook passes it through verbatim.
+func uniqueProse() string {
+	var sb strings.Builder
+	for i := 0; i < 8; i++ {
+		fmt.Fprintf(&sb, "observation %02d: the tide gauge at buoy site charlie recorded a distinct reading today\n", i)
+	}
+	return sb.String()
+}
+
+func TestPostBashFilteredRerunFiltersAgain(t *testing.T) {
+	// The first run entered context filtered, so a rerun marker claiming the
+	// full output is "above" would lie. The rerun must filter again instead.
 	out := verboseGoTest()
-	first := runPost(t, bashEvent(t.Name(), "go test -v ./...", out), nil)
+	first := runPost(t, bashEventID(t.Name(), "toolu_01", "go test -v ./...", out), nil)
 	if first == nil {
 		t.Fatal("first run should compress via sniffer")
 	}
-	second := runPost(t, bashEvent(t.Name(), "go test -v ./...", out), nil)
+	second := runPost(t, bashEventID(t.Name(), "toolu_02", "go test -v ./...", out), nil)
 	if second == nil {
-		t.Fatal("identical re-run must dedup")
+		t.Fatal("rerun of a filtered command must filter again")
 	}
 	stdout := second["stdout"].(string)
-	if !strings.Contains(stdout, "identical to the previous run") {
-		t.Errorf("bad rerun marker: %q", stdout)
+	if strings.Contains(stdout, "identical to the previous run") {
+		t.Errorf("dishonest marker against a filtered referent: %q", stdout)
 	}
-	if got := tokens.Estimate(stdout); got >= 50 {
-		t.Errorf("rerun marker costs %d tokens, want <50", got)
+	if stdout != first["stdout"].(string) {
+		t.Errorf("second output must be the filtered form again:\n%s", stdout)
+	}
+}
+
+func TestPostBashRerunAfterVerbatimDedups(t *testing.T) {
+	rawDir := t.TempDir()
+	t.Setenv("JULIUS_RAW_DIR", rawDir)
+	stdout := uniqueProse()
+	var recorded []ledger.HookEvent
+	rec := func(ev ledger.HookEvent) { recorded = append(recorded, ev) }
+
+	if u := runPost(t, bashEventID(t.Name(), "toolu_01", "./survey.sh --deep", stdout), rec); u != nil {
+		t.Fatalf("unique prose must pass through untouched, got %v", u)
+	}
+	u := runPost(t, bashEventID(t.Name(), "toolu_02", "./survey.sh --deep", stdout), rec)
+	if u == nil {
+		t.Fatal("rerun after a verbatim pass must dedup")
+	}
+	lines := strings.SplitN(u["stdout"].(string), "\n", 2)
+	if !strings.Contains(lines[0], "identical to the previous run") {
+		t.Errorf("bad rerun marker: %q", lines[0])
+	}
+	if got := tokens.Estimate(lines[0]); got >= 50 {
+		t.Errorf("marker line costs %d tokens, want <50", got)
+	}
+	if len(lines) != 2 || !strings.HasPrefix(lines[1], "[julius] raw output: ") {
+		t.Fatalf("missing raw-output pointer line: %q", u["stdout"])
+	}
+	path := strings.TrimPrefix(lines[1], "[julius] raw output: ")
+	if !strings.HasPrefix(path, rawDir) {
+		t.Errorf("stash landed outside the seam dir: %q", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("stash file unreadable: %v", err)
+	}
+	if string(data) != stdout {
+		t.Errorf("stash content differs from raw stdout (%d vs %d bytes)", len(data), len(stdout))
+	}
+	if len(recorded) != 1 || recorded[0].Kind != "session_dedup" || recorded[0].RawPath != path {
+		t.Errorf("ledger event wrong: %+v", recorded)
+	}
+	// TokensAfter must account for the full emitted string (marker AND
+	// pointer line), not just the marker.
+	if want := tokens.Estimate(u["stdout"].(string)); recorded[0].TokensAfter != want {
+		t.Errorf("TokensAfter = %d, want %d (estimate of the emitted stdout)", recorded[0].TokensAfter, want)
+	}
+
+	// Re-delivery of the marker-emitting event itself must stay silent: the
+	// suppress commit recorded toolu_02, so this is SameEvent, and the entry
+	// must NOT have been downgraded from verbatim by the marker emission.
+	if u := runPost(t, bashEventID(t.Name(), "toolu_02", "./survey.sh --deep", stdout), rec); u != nil {
+		t.Fatalf("re-delivery of the marker-emitting event must stay silent, got %v", u)
+	}
+	if len(recorded) != 1 {
+		t.Fatalf("silent re-delivery must not record a ledger event: %+v", recorded)
+	}
+
+	// Third genuine rerun: the dedup chain must survive its own marker — the
+	// suppress commit keeps the verbatim form, so toolu_03 suppresses again
+	// with a fresh, valid raw-output pointer.
+	u3 := runPost(t, bashEventID(t.Name(), "toolu_03", "./survey.sh --deep", stdout), rec)
+	if u3 == nil {
+		t.Fatal("third rerun must dedup again — the marker commit must not downgrade the verbatim form")
+	}
+	lines3 := strings.SplitN(u3["stdout"].(string), "\n", 2)
+	if !strings.Contains(lines3[0], "identical to the previous run") {
+		t.Errorf("bad second rerun marker: %q", lines3[0])
+	}
+	if len(lines3) != 2 || !strings.HasPrefix(lines3[1], "[julius] raw output: ") {
+		t.Fatalf("second marker missing raw-output pointer line: %q", u3["stdout"])
+	}
+	path3 := strings.TrimPrefix(lines3[1], "[julius] raw output: ")
+	if !strings.HasPrefix(path3, rawDir) {
+		t.Errorf("second stash landed outside the seam dir: %q", path3)
+	}
+	data3, err := os.ReadFile(path3)
+	if err != nil {
+		t.Fatalf("second stash file unreadable: %v", err)
+	}
+	if string(data3) != stdout {
+		t.Errorf("second stash content differs from raw stdout (%d vs %d bytes)", len(data3), len(stdout))
+	}
+	if len(recorded) != 2 || recorded[1].Kind != "session_dedup" || recorded[1].RawPath != path3 {
+		t.Errorf("second ledger event wrong: %+v", recorded)
+	}
+	if want := tokens.Estimate(u3["stdout"].(string)); recorded[1].TokensAfter != want {
+		t.Errorf("second TokensAfter = %d, want %d (estimate of the emitted stdout)", recorded[1].TokensAfter, want)
+	}
+}
+
+func TestPostBashSameEventDoubleInvocationSilent(t *testing.T) {
+	t.Setenv("JULIUS_RAW_DIR", t.TempDir())
+	stdout := uniqueProse()
+	ev := bashEventID(t.Name(), "toolu_01", "./survey.sh", stdout)
+	if u := runPost(t, ev, nil); u != nil {
+		t.Fatalf("first invocation must pass through, got %v", u)
+	}
+	if u := runPost(t, ev, nil); u != nil {
+		t.Fatalf("duplicate invocation of the same event must stay silent, got %v", u)
+	}
+	// a genuine rerun (new tool_use_id, same output) must still dedup
+	u := runPost(t, bashEventID(t.Name(), "toolu_02", "./survey.sh", stdout), nil)
+	if u == nil {
+		t.Fatal("genuine rerun after the double invocation must dedup")
+	}
+	if !strings.Contains(u["stdout"].(string), "identical to the previous run") {
+		t.Errorf("bad rerun marker: %q", u["stdout"])
+	}
+}
+
+func TestPostReadSameEventDoubleInvocationSilent(t *testing.T) {
+	content := bigFile("v1")
+	ev := readEventID(t.Name(), "toolu_01", "/app/h.go", content, 0)
+	if u := runPost(t, ev, nil); u != nil {
+		t.Fatalf("first invocation must pass through, got %v", u)
+	}
+	if u := runPost(t, ev, nil); u != nil {
+		t.Fatalf("duplicate invocation of the same event must stay silent, got %v", u)
+	}
+	// a genuine re-read (new tool_use_id, same content) must still dedup
+	u := runPost(t, readEventID(t.Name(), "toolu_02", "/app/h.go", content, 0), nil)
+	if u == nil {
+		t.Fatal("genuine re-read after the double invocation must dedup")
+	}
+	replaced := u["file"].(map[string]any)["content"].(string)
+	if !strings.Contains(replaced, "unchanged since your last read") {
+		t.Errorf("bad marker: %q", replaced)
+	}
+}
+
+func TestPostReadChangedFileUnderDoubleInvocationNeverUnchanged(t *testing.T) {
+	v1 := bigFile("v1")
+	v2 := strings.Replace(v1, "Handler07", "RenamedHandler07", 1)
+	e1 := readEventID(t.Name(), "toolu_e1", "/app/h.go", v1, 0)
+	e2 := readEventID(t.Name(), "toolu_e2", "/app/h.go", v2, 0)
+
+	runPost(t, e1, nil)
+	runPost(t, e1, nil)
+	// first invocation of the changed-file event must deliver the diff
+	u := runPost(t, e2, nil)
+	if u == nil {
+		t.Fatal("first invocation of the changed-file event must diff")
+	}
+	content := u["file"].(map[string]any)["content"].(string)
+	if !strings.Contains(content, "changed since your last read") ||
+		strings.Contains(content, "unchanged since your last read") {
+		t.Errorf("first invocation must deliver a diff, not an unchanged marker:\n%s", content)
+	}
+	// second invocation of the same event must stay silent — never a marker
+	// claiming the changed content is unchanged
+	if u := runPost(t, e2, nil); u != nil {
+		t.Errorf("duplicate invocation of the changed-file event must stay silent, got %v", u)
+	}
+}
+
+func TestPostBashDedupStashFailureFallsThrough(t *testing.T) {
+	// A path under a regular file makes every stash MkdirAll fail.
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("JULIUS_RAW_DIR", filepath.Join(blocker, "raw"))
+
+	stdout := uniqueProse()
+	runPost(t, bashEventID(t.Name(), "toolu_01", "./survey.sh", stdout), nil)
+	u := runPost(t, bashEventID(t.Name(), "toolu_02", "./survey.sh", stdout), nil)
+	if u == nil {
+		return // fell through to the filter path, which had nothing to do
+	}
+	if s := u["stdout"].(string); strings.Contains(s, "identical to the previous run") {
+		t.Errorf("suppression without a stash is a dead end: %q", s)
+	}
+}
+
+func TestPostBashLegacyEntryNeverSuppresses(t *testing.T) {
+	t.Setenv("JULIUS_RAW_DIR", t.TempDir())
+	stdout := uniqueProse()
+	// pre-seed a pre-migration raw entry
+	session.Open(t.Name()).Store("bash:./survey.sh", []byte(stdout))
+
+	if u := runPost(t, bashEventID(t.Name(), "toolu_01", "./survey.sh", stdout), nil); u != nil {
+		t.Fatalf("legacy entry must never justify a marker, got %v", u)
+	}
+	// the delivery above upgraded the entry; a rerun now dedups honestly
+	u := runPost(t, bashEventID(t.Name(), "toolu_02", "./survey.sh", stdout), nil)
+	if u == nil || !strings.Contains(u["stdout"].(string), "identical to the previous run") {
+		t.Fatalf("upgraded entry must dedup on the next rerun, got %v", u)
+	}
+}
+
+func TestPostReadLegacyEntryNeverSuppresses(t *testing.T) {
+	content := bigFile("v1")
+	session.Open(t.Name()).Store("read:/app/h.go", []byte(content))
+
+	if u := runPost(t, readEventID(t.Name(), "toolu_01", "/app/h.go", content, 0), nil); u != nil {
+		t.Fatalf("legacy entry must never justify a marker, got %v", u)
+	}
+	u := runPost(t, readEventID(t.Name(), "toolu_02", "/app/h.go", content, 0), nil)
+	if u == nil {
+		t.Fatal("upgraded entry must dedup on the next re-read")
+	}
+	replaced := u["file"].(map[string]any)["content"].(string)
+	if !strings.Contains(replaced, "unchanged since your last read") {
+		t.Errorf("bad marker: %q", replaced)
+	}
+}
+
+func TestPostBashLegacyEntryChangedContentPassesThrough(t *testing.T) {
+	t.Setenv("JULIUS_RAW_DIR", t.TempDir())
+	oldOut := uniqueProse()
+	newOut := strings.ReplaceAll(oldOut, "buoy site charlie", "buoy site delta")
+	// pre-seed a pre-migration raw entry with DIFFERENT content
+	session.Open(t.Name()).Store("bash:./survey.sh", []byte(oldOut))
+
+	// unknown provenance + changed content: no diff, no marker — the fresh
+	// output must reach the agent whole
+	if u := runPost(t, bashEventID(t.Name(), "toolu_01", "./survey.sh", newOut), nil); u != nil {
+		t.Fatalf("changed content against a legacy entry must pass through whole, got %v", u)
+	}
+	// the delivery upgraded the entry to verbatim newOut; a rerun dedups
+	u := runPost(t, bashEventID(t.Name(), "toolu_02", "./survey.sh", newOut), nil)
+	if u == nil || !strings.Contains(u["stdout"].(string), "identical to the previous run") {
+		t.Fatalf("upgraded entry must dedup on the next rerun, got %v", u)
+	}
+}
+
+func TestPostReadLegacyEntryChangedContentPassesThrough(t *testing.T) {
+	v1 := bigFile("v1")
+	// a small change that WOULD be a profitable diff against a trusted referent
+	v2 := strings.Replace(v1, "Handler07", "RenamedHandler07", 1)
+	session.Open(t.Name()).Store("read:/app/h.go", []byte(v1))
+
+	if u := runPost(t, readEventID(t.Name(), "toolu_01", "/app/h.go", v2, 0), nil); u != nil {
+		t.Fatalf("changed content against a legacy entry must pass through whole (no diff, no marker), got %v", u)
+	}
+	// the delivery upgraded the entry to verbatim v2; a re-read dedups
+	u := runPost(t, readEventID(t.Name(), "toolu_02", "/app/h.go", v2, 0), nil)
+	if u == nil {
+		t.Fatal("upgraded entry must dedup on the next re-read")
+	}
+	replaced := u["file"].(map[string]any)["content"].(string)
+	if !strings.Contains(replaced, "unchanged since your last read") {
+		t.Errorf("bad marker: %q", replaced)
+	}
+}
+
+func TestPostBashSameEventDifferentContentSilent(t *testing.T) {
+	t.Setenv("JULIUS_RAW_DIR", t.TempDir())
+	if u := runPost(t, bashEventID(t.Name(), "toolu_01", "go test -v ./...", uniqueProse()), nil); u != nil {
+		t.Fatalf("first invocation must pass through, got %v", u)
+	}
+	// A duplicate invocation of the SAME event must stay silent even if the
+	// payload differs — SameEvent precedes any content comparison. The second
+	// payload is deliberately filterable: if the SameEvent check were content-
+	// gated, this would fall through to the sniffer and emit.
+	if u := runPost(t, bashEventID(t.Name(), "toolu_01", "go test -v ./...", verboseGoTest()), nil); u != nil {
+		t.Fatalf("duplicate invocation with different payload must stay silent, got %v", u)
+	}
+}
+
+func TestPostReadNoMarkerAfterDiff(t *testing.T) {
+	v1 := bigFile("v1")
+	v2 := strings.Replace(v1, "Handler07", "RenamedHandler07", 1)
+
+	if u := runPost(t, readEventID(t.Name(), "toolu_01", "/app/h.go", v1, 0), nil); u != nil {
+		t.Fatalf("first read must pass through, got %v", u)
+	}
+	u := runPost(t, readEventID(t.Name(), "toolu_02", "/app/h.go", v2, 0), nil)
+	if u == nil || !strings.Contains(u["file"].(map[string]any)["content"].(string), "changed since your last read") {
+		t.Fatalf("changed re-read must diff, got %v", u)
+	}
+	// only a diff of v2 is in context, so the next identical read re-anchors
+	// with full content instead of claiming it is above
+	if u := runPost(t, readEventID(t.Name(), "toolu_03", "/app/h.go", v2, 0), nil); u != nil {
+		t.Fatalf("read after a diff must re-emit full content, got %v", u)
+	}
+	// now v2 is in context verbatim; the fourth read may suppress
+	u = runPost(t, readEventID(t.Name(), "toolu_04", "/app/h.go", v2, 0), nil)
+	if u == nil {
+		t.Fatal("read after the re-anchor must dedup")
+	}
+	replaced := u["file"].(map[string]any)["content"].(string)
+	if !strings.Contains(replaced, "unchanged since your last read") {
+		t.Errorf("bad marker: %q", replaced)
+	}
+	// and the marker commit must not downgrade the verbatim form: a fifth
+	// identical read suppresses again
+	u = runPost(t, readEventID(t.Name(), "toolu_05", "/app/h.go", v2, 0), nil)
+	if u == nil {
+		t.Fatal("fifth read must dedup again — the marker commit must not downgrade the verbatim form")
+	}
+	replaced = u["file"].(map[string]any)["content"].(string)
+	if !strings.Contains(replaced, "unchanged since your last read") {
+		t.Errorf("bad second marker: %q", replaced)
 	}
 }
