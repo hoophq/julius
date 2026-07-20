@@ -17,6 +17,7 @@ func hermeticEnv(t *testing.T) (home string) {
 	t.Helper()
 	home = t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads USERPROFILE on Windows
 	t.Setenv("JULIUS_RAW_DIR", filepath.Join(home, "julius-raw"))
 	t.Setenv("JULIUS_LEDGER", filepath.Join(home, "julius-ledger.db"))
 	t.Setenv("JULIUS_SESSION_DIR", filepath.Join(home, "julius-session"))

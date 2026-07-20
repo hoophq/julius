@@ -353,14 +353,16 @@ func readCapped(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return io.ReadAll(io.LimitReader(f, maxSourceRead))
 }
 
-// tildePath abbreviates a path under home to ~/... for display.
+// tildePath abbreviates a path under home to ~/... for display. The label
+// uses forward slashes on every platform so doctor output (and its tests)
+// read identically across OSes.
 func tildePath(home, path string) string {
 	if home != "" && strings.HasPrefix(path, home+string(filepath.Separator)) {
-		return "~" + path[len(home):]
+		return "~" + filepath.ToSlash(path[len(home):])
 	}
 	return path
 }
