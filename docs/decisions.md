@@ -133,3 +133,49 @@ by paraphrasing.
 per-package-manager filters (npm/pnpm/yarn, pip, bundler, cargo, uv, …), each
 tuned to its tool's output. A generic `deps` wrapper would duplicate them with
 less precision.
+
+## Session-dedup provenance and terminal-only wrapping (ATR-147/148/149, 2026-07-20)
+
+A field report — the same content re-entering context despite a dedup
+marker claiming it was "above", traced to a doubled hook registration —
+forced a pass over what the session cache is allowed to promise. Five
+decisions came out of it:
+
+**Cache entries record provenance.** Every entry stores the form the
+output actually entered context in (verbatim, filtered, or diff) plus the
+originating `tool_use_id`. Suppression only fires against verbatim
+referents: "see above" is a lie when "above" was a filtered rendering of
+the content, because the agent never held the bytes the marker claims it
+did. Filtered and diff entries can never back a dedup
+marker — a repeated read passes the fresh output through (possibly
+filtered again) instead of being suppressed; those entries exist only to
+make duplicate deliveries of the same event idempotent.
+
+**The same event never self-dedups.** Hook events carry an id, and an
+invocation that sees its own event id already recorded is a no-op rather
+than a "duplicate" hit. This makes doubled hook registration — julius in
+settings.json *and* via a plugin, the exact configuration found in the
+field — a supported, detected state instead of a corruption source:
+doctor names both sources and warns about the wasted round-trip, but the
+output stays correct either way.
+
+**Bash dedup markers carry a stash pointer.** A rerun marker now links
+the stashed raw output (`[julius] raw output: <path>`), extending the
+rule the ErrorsOnly trim established above: the wrapper surface may only
+shorten what it can point back to. No stash, no marker — if the raw
+output failed to land on disk, the agent gets the real output again.
+
+**Only the terminal pipeline segment is wrapped.** In `a | b | c`, the
+stdout of `a` and `b` is program input for the next stage, not agent
+context — filtering it would hand `b` different bytes than the user's
+pipeline produced. julius therefore wraps only the segment whose output
+the model will actually read. Accepted cost: no savings on interior pipe
+stages, and they are excluded from scan/coverage accounting rather than
+counted as misses.
+
+**Per-agent-context cache scoping is deferred (ATR-150).** Subagents
+share a session id with their parent but not a context window, so a
+parent-side cache hit can suppress output a subagent never saw. The
+`session.ScopeID` seam exists for exactly this split; wiring a reliable
+per-context discriminator through the hook payload is its own change and
+ships separately.

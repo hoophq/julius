@@ -10,6 +10,7 @@ import (
 )
 
 func TestInitIsIdempotent(t *testing.T) {
+	hermeticEnv(t) // keep the plugin scan and env seams off the real machine
 	dir := t.TempDir()
 	var out bytes.Buffer
 
@@ -42,6 +43,7 @@ func TestInitIsIdempotent(t *testing.T) {
 }
 
 func TestInitPreservesExistingSettings(t *testing.T) {
+	hermeticEnv(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".claude", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -85,6 +87,7 @@ func TestInitPreservesExistingSettings(t *testing.T) {
 }
 
 func TestInitMCPUpgradesMatcherInPlace(t *testing.T) {
+	hermeticEnv(t)
 	dir := t.TempDir()
 	var out bytes.Buffer
 
@@ -123,6 +126,7 @@ func TestInitMCPUpgradesMatcherInPlace(t *testing.T) {
 }
 
 func TestInitSkipModePrintsInstructions(t *testing.T) {
+	hermeticEnv(t)
 	dir := t.TempDir()
 	var out bytes.Buffer
 	if err := Init(false, PatchSkip, false, dir, strings.NewReader(""), &out); err != nil {
@@ -133,5 +137,55 @@ func TestInitSkipModePrintsInstructions(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), HookCommand) {
 		t.Errorf("instructions missing hook command: %s", out.String())
+	}
+	if strings.Contains(out.String(), "already runs julius hooks") {
+		t.Errorf("plugin note printed with no plugin installed: %s", out.String())
+	}
+}
+
+func TestInitWarnsWhenPluginAlreadyRegisters(t *testing.T) {
+	home := hermeticEnv(t)
+	writePluginFixture(t, home, "hoop@hooplabs")
+	dir := t.TempDir()
+	var out bytes.Buffer
+
+	// Auto mode: note printed, install proceeds anyway.
+	if err := Init(false, PatchAuto, false, dir, strings.NewReader(""), &out); err != nil {
+		t.Fatal(err)
+	}
+	note := "note: the plugin hoop@hooplabs already runs julius hooks — installing into settings.json will duplicate the hook invocation (julius dedups events, but each call pays two hook round-trips)."
+	if !strings.Contains(out.String(), note) {
+		t.Errorf("auto-patch output missing plugin note:\n%s", out.String())
+	}
+	if !Installed(filepath.Join(dir, ".claude", "settings.json")) {
+		t.Error("auto-patch must still install after the note")
+	}
+
+	// No-patch mode: note appended to the manual instructions.
+	out.Reset()
+	dir2 := t.TempDir()
+	if err := Init(false, PatchSkip, false, dir2, strings.NewReader(""), &out); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	if !strings.Contains(s, note) {
+		t.Errorf("no-patch output missing plugin note:\n%s", s)
+	}
+	if strings.Index(s, note) < strings.Index(s, HookCommand) {
+		t.Errorf("note must follow the manual instructions:\n%s", s)
+	}
+
+	// Already-installed early return: the duplication note still prints —
+	// this path is exactly the settings+plugin state doctor warns about.
+	out.Reset()
+	if err := Init(false, PatchAuto, false, dir, strings.NewReader(""), &out); err != nil {
+		t.Fatal(err)
+	}
+	s = out.String()
+	if !strings.Contains(s, "already installed") {
+		t.Fatalf("expected the already-installed early return:\n%s", s)
+	}
+	if !strings.Contains(s, note) {
+		t.Errorf("already-installed path must still print the plugin note:\n%s", s)
 	}
 }
