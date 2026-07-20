@@ -25,6 +25,8 @@ func TestSplitChain(t *testing.T) {
 		{"echo `date; date`", []string{"echo `date; date`"}},
 		// escaped separators
 		{`echo a\;b`, []string{`echo a\;b`}},
+		// >| is a clobber redirect, not a pipe
+		{"git status >| out.txt", []string{"git status >| out.txt"}},
 	}
 	for _, c := range cases {
 		parts := SplitChain(c.in)
@@ -53,7 +55,31 @@ func TestRoute(t *testing.T) {
 		{"git status", "julius git status", true},
 		{"ls -la", "ls -la", false},
 		{"git add . && git commit -m 'wip'", "julius git add . && julius git commit -m 'wip'", true},
-		{"git status | head -3", "julius git status | head -3", true},
+		// pipe-feeding segments are never wrapped: a filter would truncate
+		// the next command's stdin and inject marker lines as data
+		{"git status | head -3", "git status | head -3", false},
+		{"foo | git status && bar | go test ./...", "foo | julius git status && bar | julius go test ./...", true},
+		{"git status | head && git log", "git status | head && julius git log", true},
+		{"git status ; git log | cat", "julius git status ; git log | cat", true},
+		// || chains segments, it does not pipe them
+		{"git status || git log", "julius git status || julius git log", true},
+		// a quoted pipe is text, not a pipe
+		{`echo "a | b" && git status`, `echo "a | b" && julius git status`, true},
+		// stdout-redirected segments are never wrapped: the file must
+		// receive the raw output, not julius-filtered content
+		{"git status > /tmp/x.txt", "git status > /tmp/x.txt", false},
+		{"git status >> f", "git status >> f", false},
+		{"git status 1> f", "git status 1> f", false},
+		{"git log &> f", "git log &> f", false},
+		{"git status >| f", "git status >| f", false},
+		// stderr-only redirections leave stdout on the caller's terminal
+		{"git status 2>/dev/null", "julius git status 2>/dev/null", true},
+		{"git status 2>&1", "julius git status 2>&1", true},
+		// a quoted '>' is data, not a redirect
+		{`echo "a > b" && git status`, `echo "a > b" && julius git status`, true},
+		{`git commit -m "a > b"`, `julius git commit -m "a > b"`, true},
+		// a redirect disqualifies only its own segment
+		{"git status > f && git log", "git status > f && julius git log", true},
 		// idempotence: already wrapped stays untouched
 		{"julius git status", "julius git status", false},
 		{"julius git add . && git push", "julius git add . && julius git push", true},
@@ -88,6 +114,95 @@ func TestRoute(t *testing.T) {
 		got, changed := Route(c.in, gitOrGoTest)
 		if got != c.want || changed != c.wantChanged {
 			t.Errorf("Route(%q) = (%q, %v), want (%q, %v)", c.in, got, changed, c.want, c.wantChanged)
+		}
+	}
+}
+
+func TestPartTerminal(t *testing.T) {
+	cases := []struct {
+		sep  string
+		want bool
+	}{
+		{"", true},
+		{"&&", true},
+		{"||", true},
+		{";", true},
+		{"|", false},
+	}
+	for _, c := range cases {
+		if got := (Part{Sep: c.sep}).Terminal(); got != c.want {
+			t.Errorf("Part{Sep: %q}.Terminal() = %v, want %v", c.sep, got, c.want)
+		}
+	}
+}
+
+func TestPartStdoutRedirected(t *testing.T) {
+	cases := []struct {
+		text string
+		want bool
+	}{
+		{"git status", false},
+		{"git status > /tmp/x.txt", true},
+		{"git status >/tmp/x.txt", true},
+		{"git status >> log", true},
+		{"git status 1> f", true},
+		{"git status 1>> f", true},
+		{"git log &> f", true},
+		{"git log &>> f", true},
+		{"git status >| f", true},
+		{"git status >& f", true},
+		// stderr-only forms and descriptor duplications keep stdout on the caller
+		{"git status 2> /dev/null", false},
+		{"git status 2>/dev/null", false},
+		{"git status 2>> err.log", false},
+		{"git status 2>&1", false},
+		{"git status >&2", false},
+		{"git status 1>&2", false},
+		{"go test ./... 3> trace", false},
+		// quoted, escaped, and nested '>' are data, not redirects
+		{`echo "a > b"`, false},
+		{`echo 'a > b'`, false},
+		{`echo a\>b`, false},
+		{"echo $(cat > f)", false},
+		// a stderr redirect does not mask a real stdout redirect
+		{"git status 2>/dev/null > out", true},
+	}
+	for _, c := range cases {
+		if got := (Part{Text: c.text}).StdoutRedirected(); got != c.want {
+			t.Errorf("Part{Text: %q}.StdoutRedirected() = %v, want %v", c.text, got, c.want)
+		}
+	}
+}
+
+// TestRouteNeverTouchesPipeFeeders pins the invariant behind ATR-149: no
+// segment whose stdout feeds a pipe is ever rewritten, even under a matcher
+// that routes everything, so no filter marker can be injected upstream of a
+// consumer.
+func TestRouteNeverTouchesPipeFeeders(t *testing.T) {
+	everything := func(string) bool { return true }
+	pipelines := []string{
+		"git status | head -3",
+		"foo | bar | baz",
+		"a | b && c | d",
+		"git log --oneline | wc -l ; git status | cat",
+		`echo "x | y" | grep x`,
+		"CGO_ENABLED=0 go test -v ./... | tail -20 || make build | tee out.log",
+	}
+	for _, in := range pipelines {
+		out, _ := Route(in, everything)
+		inParts := SplitChain(in)
+		outParts := SplitChain(out)
+		if len(outParts) != len(inParts) {
+			t.Errorf("Route(%q) changed segment count: %q", in, out)
+			continue
+		}
+		for i, p := range inParts {
+			if outParts[i].Sep != p.Sep {
+				t.Errorf("Route(%q) changed separator %d: %q → %q", in, i, p.Sep, outParts[i].Sep)
+			}
+			if !p.Terminal() && outParts[i].Text != p.Text {
+				t.Errorf("Route(%q) rewrote pipe-feeding segment %q → %q", in, p.Text, outParts[i].Text)
+			}
 		}
 	}
 }

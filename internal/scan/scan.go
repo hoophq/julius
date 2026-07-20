@@ -196,21 +196,34 @@ func classify(cmd, stdout string, reg *filter.Registry, rep *Report, missed map[
 
 	// Match exactly as the router rewrites: env prefixes, sudo, and path
 	// invocations reduce to the same target the hook would route, checked
-	// per chain segment.
+	// per chain segment. Only segments the router would wrap count — it
+	// never touches one feeding a pipe or redirecting stdout to a file, so
+	// a match there is not realizable savings.
 	pick := func(c string) filter.Filter {
 		return reg.Pick(router.MatchTarget(c))
 	}
-	f := pick(cmd)
-	if f == nil {
-		for _, p := range router.SplitChain(cmd) {
-			if p.Text != "" && pick(p.Text) != nil {
-				f = pick(p.Text)
-				break
-			}
+	var f filter.Filter
+	declined := false
+	for _, p := range router.SplitChain(cmd) {
+		if p.Text == "" || pick(p.Text) == nil {
+			continue
 		}
+		if !p.Terminal() || p.StdoutRedirected() {
+			declined = true
+			continue
+		}
+		f = pick(p.Text)
+		break
 	}
 
 	if f == nil {
+		// A filter matched only segments the router deliberately declines
+		// (pipe feeders, stdout redirected to a file), so the command is
+		// neither missed savings nor a candidate for a filter that already
+		// exists.
+		if declined {
+			return
+		}
 		fam := family(cmd)
 		c := candidates[fam]
 		if c == nil {
