@@ -10,7 +10,7 @@ Coding agents spend most of their context window on low-signal output — test r
 
 julius sits between the noise and the model:
 
-- **Command-output compression** — dev commands return a compressed, high-signal version of their output: 60+ built-in filters covering git, test runners, linters, package managers, docker/kubectl, cloud and infra CLIs (aws, gh, terraform), build tools, and shell utilities. **Typically 60–90% savings on supported commands**, measured, with the full raw output always recoverable from disk.
+- **Command-output compression** — dev commands return a compressed, high-signal version of their output: 60+ built-in filters covering git, test runners, linters, package managers, docker/kubectl, cloud and infra CLIs (aws, gh, terraform), build tools, and shell utilities. **Typically 60–90% savings on supported commands**, measured, with the raw output of failing commands and deduplicated reruns stashed to disk and linked.
 - **Native tool interception** — file re-reads collapse to a marker when nothing changed (or a diff when something did), repeated command outputs dedupe, search results get bounded, and (opt-in) MCP tool outputs are compacted. This works on your agent's built-in tools, not just shell commands.
 - **API usage metering** — point any script at the julius local proxy (`ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL`) and get exact, provider-reported token usage per app and model. No code changes, no TLS tricks, payloads forwarded byte-for-byte — unless an app opts into tool-result compression (below).
 
@@ -58,15 +58,15 @@ Command-output savings · estimates · last 30d
 
 julius integrates with Claude Code through two hooks:
 
-1. **Before a command runs**, julius rewrites it to run through the julius wrapper (`git status` → `julius git status`) — the wrapper executes the real command and filters its output. Your permission rules are respected: denied commands are never touched, ask-rules still prompt.
-2. **After a native tool runs** (Read, Grep, Glob, or an unwrapped command), julius compresses the result before it enters context: format-aware filtering for recognized outputs, repeated-line dedup for logs, session-level dedup for repeated reads.
+1. **Before a command runs**, julius rewrites it to run through the julius wrapper (`git status` → `julius git status`) — the wrapper executes the real command and filters its output. Your permission rules are respected: denied commands are never touched, ask-rules still prompt. Only the terminal segment of a pipeline is wrapped — data flowing between pipe stages is never filtered.
+2. **After a native tool runs** (Read, Grep, Glob, or an unwrapped command), julius compresses the result before it enters context: format-aware filtering for recognized outputs, repeated-line dedup for logs, session-level dedup for repeated reads. Duplicate deliveries of the same hook event (as reported by Claude Code's `tool_use_id`) are handled idempotently: if two integrations (settings.json and a plugin) both invoke julius on that event, the second invocation is a no-op.
 
 Opt-in, the same post hook can also compress **MCP tool outputs** (`julius init --mcp`): JSON results are compacted — null fields dropped, long lists capped, embedded documents truncated — with every removal disclosed in a marker line. Ids and urls always survive intact, error results and non-JSON text are never touched.
 
 Three guarantees hold everywhere:
 
 - **Never larger** — if filtering doesn't shrink the output, you get the original.
-- **Never lossy where it matters** — errors, failures, and warnings are kept; fresh file content is never rewritten; the raw output of failing commands is stashed to disk and linked (`[julius] raw output: <path>`).
+- **Never lossy where it matters** — errors, failures, and warnings are kept; fresh file content is never rewritten; the raw output of failing commands is stashed to disk and linked (`[julius] raw output: <path>`); and a dedup marker is only ever issued when the referenced output actually entered context verbatim — a Bash rerun marker links the stashed raw output (`[julius] raw output: <path>`); when the referent wasn't emitted verbatim, julius passes the fresh output through (possibly filtered) instead of suppressing it.
 - **Honest accounting** — command-surface numbers are estimates and labeled as such; proxy-surface numbers are exact and provider-reported. The two are never blended.
 
 ## API usage metering

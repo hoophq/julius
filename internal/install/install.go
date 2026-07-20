@@ -87,20 +87,46 @@ func Init(global bool, mode PatchMode, mcp bool, cwd string, stdin io.Reader, st
 		matcher = PostHookMatcherMCP
 	}
 
+	// A plugin can already run the julius hooks (the hoop plugin does, via
+	// its own hook scripts). Installing into settings.json on top of that
+	// duplicates every hook invocation — warn, but let the user decide:
+	// removing the plugin, not skipping init, might be what they want.
+	// Computed before the already-installed early return so an existing
+	// settings+plugin duplicate is reported there too.
+	pluginNote := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		preSrc, postSrc := hookSourceDetails(home, cwd)
+		if p, ok := firstPluginSource(postSrc, preSrc); ok {
+			pluginNote = fmt.Sprintf("note: the plugin %s already runs julius hooks — installing into settings.json will duplicate the hook invocation (julius dedups events, but each call pays two hook round-trips).", p.pluginName)
+		}
+	}
+
 	if installedWith(path, matcher) {
 		fmt.Fprintf(stdout, "julius hook already installed in %s\n", path)
+		if pluginNote != "" {
+			fmt.Fprintf(stdout, "%s\n", pluginNote)
+		}
 		return nil
 	}
 
 	if mode == PatchSkip {
 		printManual(stdout, path, matcher)
+		if pluginNote != "" {
+			fmt.Fprintf(stdout, "\n%s\n", pluginNote)
+		}
 		return nil
 	}
 	if mode == PatchAsk {
 		if !isTerminal(os.Stdin) {
 			printManual(stdout, path, matcher)
 			fmt.Fprintln(stdout, "\n(non-interactive session: re-run with --auto-patch to apply)")
+			if pluginNote != "" {
+				fmt.Fprintf(stdout, "\n%s\n", pluginNote)
+			}
 			return nil
+		}
+		if pluginNote != "" {
+			fmt.Fprintf(stdout, "%s\n", pluginNote)
 		}
 		fmt.Fprintf(stdout, "Register the julius hook in %s? [y/N] ", path)
 		var answer string
@@ -111,6 +137,9 @@ func Init(global bool, mode PatchMode, mcp bool, cwd string, stdin io.Reader, st
 		}
 	}
 
+	if mode == PatchAuto && pluginNote != "" {
+		fmt.Fprintf(stdout, "%s\n", pluginNote)
+	}
 	if err := patchSettings(path, matcher); err != nil {
 		return err
 	}
