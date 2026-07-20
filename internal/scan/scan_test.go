@@ -143,6 +143,88 @@ func TestScanChainAttribution(t *testing.T) {
 	}
 }
 
+func TestScanInteriorPipelineNotMissed(t *testing.T) {
+	dir := t.TempDir()
+	lines := []string{
+		// the only filter match feeds a pipe: the router declines to wrap
+		// these (a filter would corrupt the pipe), so scan must not report
+		// them as missed savings — nor as a candidate for a filter that
+		// already exists
+		useLine("t1", "git status | head -3"),
+		resultLine("t1", strings.Repeat("M internal/scan/scan.go\n", 20)),
+		// a terminal match in a mixed chain still counts as a miss
+		useLine("t2", "git status | head && go test -v ./..."),
+		resultLine("t2", verboseGoTest()),
+		// wrapped baseline so Coverage has a denominator
+		useLine("t3", "julius git status"),
+		resultLine("t3", "On branch main"),
+	}
+	if err := os.WriteFile(filepath.Join(dir, "s1.jsonl"), []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Dir(dir, time.Now().Add(-time.Hour), filter.Load(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.BashCommands != 3 || rep.Wrapped != 1 {
+		t.Errorf("counts wrong: %+v", rep)
+	}
+	if len(rep.Missed) != 1 || rep.Missed[0].Command != "go-test" || rep.Missed[0].Runs != 1 {
+		t.Errorf("only the terminal go test may be missed: %+v", rep.Missed)
+	}
+	if len(rep.Candidates) != 0 {
+		t.Errorf("declined pipeline leaked into candidates: %+v", rep.Candidates)
+	}
+	// The declined pipeline must not appear in the coverage denominator:
+	// 1 wrapped of 2 routable, not of 3.
+	pct, wrapped, routable := rep.Coverage()
+	if wrapped != 1 || routable != 2 || pct != 50 {
+		t.Errorf("coverage = %.0f%% (%d/%d), want 50%% (1/2)", pct, wrapped, routable)
+	}
+}
+
+func TestScanRedirectedNotMissed(t *testing.T) {
+	dir := t.TempDir()
+	lines := []string{
+		// the only filter match redirects stdout to a file: the router
+		// declines to wrap these (the file would receive filtered content),
+		// so scan must not report them as missed savings — nor as a
+		// candidate for a filter that already exists
+		useLine("t1", "go test -v ./... > /tmp/out.txt"),
+		resultLine("t1", verboseGoTest()),
+		// a stderr-only redirection is still wrappable → still a miss
+		useLine("t2", "go test -v ./... 2>/dev/null"),
+		resultLine("t2", verboseGoTest()),
+		// wrapped baseline so Coverage has a denominator
+		useLine("t3", "julius git status"),
+		resultLine("t3", "On branch main"),
+	}
+	if err := os.WriteFile(filepath.Join(dir, "s1.jsonl"), []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Dir(dir, time.Now().Add(-time.Hour), filter.Load(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.BashCommands != 3 || rep.Wrapped != 1 {
+		t.Errorf("counts wrong: %+v", rep)
+	}
+	if len(rep.Missed) != 1 || rep.Missed[0].Command != "go-test" || rep.Missed[0].Runs != 1 {
+		t.Errorf("only the stderr-redirected go test may be missed: %+v", rep.Missed)
+	}
+	if len(rep.Candidates) != 0 {
+		t.Errorf("declined redirect leaked into candidates: %+v", rep.Candidates)
+	}
+	// The declined redirect must not appear in the coverage denominator:
+	// 1 wrapped of 2 routable, not of 3.
+	pct, wrapped, routable := rep.Coverage()
+	if wrapped != 1 || routable != 2 || pct != 50 {
+		t.Errorf("coverage = %.0f%% (%d/%d), want 50%% (1/2)", pct, wrapped, routable)
+	}
+}
+
 func TestScanWindowFilter(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "old.jsonl")
