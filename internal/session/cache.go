@@ -72,6 +72,13 @@ func (c *Cache) Store(key string, content []byte) {
 		_ = os.Remove(c.path(key))
 		return
 	}
+	c.write(key, content)
+}
+
+// write persists content under key atomically, with no size gate: Commit
+// caps the raw content before encoding, so an encoded blob may exceed
+// maxEntryBytes by the small header overhead.
+func (c *Cache) write(key string, content []byte) {
 	if err := os.MkdirAll(c.dir, 0o755); err != nil {
 		return
 	}
