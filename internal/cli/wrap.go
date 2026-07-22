@@ -95,6 +95,10 @@ func wrap(argv []string) int {
 	// with the one-token acks the filter emits.
 	if before := tokens.Estimate(raw); before > 0 {
 		record(ledger.HookEvent{
+			// Claude Code exports the session id into the Bash tool's
+			// environment; empty outside a session, and per-session views
+			// exclude (and disclose) unattributed rows rather than guess.
+			SessionID:    os.Getenv("CLAUDE_CODE_SESSION_ID"),
 			Kind:         "command",
 			Tool:         "cli",
 			Command:      cmdline,

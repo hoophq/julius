@@ -39,7 +39,7 @@ func TestRecordAndAggregate(t *testing.T) {
 		t.Errorf("totals = %+v", tot)
 	}
 
-	top, err := l.TopCommands(base.Add(-time.Hour), 5)
+	top, err := l.TopCommands(base.Add(-time.Hour), "", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,6 +54,131 @@ func TestRecordAndAggregate(t *testing.T) {
 	}
 	if tot.Events != 1 {
 		t.Errorf("since filter: events = %d, want 1", tot.Events)
+	}
+}
+
+func TestHookKindAndToolBreakdown(t *testing.T) {
+	l := openTemp(t)
+	base := time.Date(2026, 7, 7, 10, 0, 0, 0, time.UTC)
+	events := []HookEvent{
+		{TS: base, SessionID: "s1", Kind: "command", Tool: "cli", Command: "git status", TokensBefore: 500, TokensAfter: 100},
+		{TS: base, SessionID: "", Kind: "command", Tool: "cli", Command: "go test", TokensBefore: 900, TokensAfter: 100},
+		{TS: base, SessionID: "s1", Kind: "post_compress", Tool: "Bash", Command: "npm install", TokensBefore: 400, TokensAfter: 40},
+		{TS: base, SessionID: "s2", Kind: "post_compress", Tool: "Grep", Command: "grep foo", TokensBefore: 300, TokensAfter: 200},
+		{TS: base, SessionID: "s1", Kind: "post_compress", Tool: "", Command: "old row", TokensBefore: 100, TokensAfter: 50},
+		{TS: base, SessionID: "s1", Kind: "session_dedup", Tool: "Read", Command: "read /x.go", TokensBefore: 800, TokensAfter: 20},
+		{TS: base, SessionID: "s1", Kind: "hologram", Command: "???", TokensBefore: 10, TokensAfter: 5},
+	}
+	for _, ev := range events {
+		if err := l.RecordHookEvent(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	since := base.Add(-time.Hour)
+
+	kinds, err := l.HookKindTotals(since, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKind := map[string]Totals{}
+	for _, k := range kinds {
+		byKind[k.Kind] = k.Totals
+	}
+	if got := byKind["command"]; got.Events != 2 || got.TokensBefore != 1400 {
+		t.Errorf("command kind = %+v", got)
+	}
+	if got := byKind["post_compress"]; got.Events != 3 || got.Saved() != 510 {
+		t.Errorf("post_compress kind = %+v", got)
+	}
+	// unknown kinds come back as recorded, never folded into a known bucket
+	if got := byKind["hologram"]; got.Events != 1 {
+		t.Errorf("unknown kind must be returned as-is, got %+v", byKind)
+	}
+
+	// session filter drops other sessions and unattributed rows
+	kinds, err = l.HookKindTotals(since, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKind = map[string]Totals{}
+	for _, k := range kinds {
+		byKind[k.Kind] = k.Totals
+	}
+	if got := byKind["command"]; got.Events != 1 || got.TokensBefore != 500 {
+		t.Errorf("session-scoped command kind = %+v", got)
+	}
+	if got := byKind["post_compress"]; got.Events != 2 {
+		t.Errorf("session-scoped post_compress kind = %+v", got)
+	}
+
+	// per-tool split preserves the empty tool as its own row
+	tools, err := l.HookToolTotals(since, "post_compress", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != 3 || tools[0].Tool != "Bash" { // ordered by saved desc
+		t.Errorf("tools = %+v", tools)
+	}
+	sawEmpty := false
+	for _, tt := range tools {
+		if tt.Tool == "" {
+			sawEmpty = true
+			if tt.Events != 1 || tt.Saved() != 50 {
+				t.Errorf("unattributed tool row = %+v", tt)
+			}
+		}
+	}
+	if !sawEmpty {
+		t.Error("pre-attribution rows must surface with an empty tool, not vanish")
+	}
+
+	// rows without session attribution, for session-view disclosure
+	noSess, err := l.HookNoSessionTotals(since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noSess.Events != 1 || noSess.TokensBefore != 900 {
+		t.Errorf("no-session totals = %+v", noSess)
+	}
+}
+
+func TestTopCommandsOnlyCommandKinds(t *testing.T) {
+	l := openTemp(t)
+	base := time.Date(2026, 7, 7, 10, 0, 0, 0, time.UTC)
+	events := []HookEvent{
+		{TS: base, SessionID: "s1", Kind: "command", Command: "go test", TokensBefore: 500, TokensAfter: 100},
+		{TS: base, SessionID: "s2", Kind: "command", Command: "npm install", TokensBefore: 400, TokensAfter: 50},
+		{TS: base, Kind: "rewrite", Command: "git log", TokensBefore: 300, TokensAfter: 30},
+		// pseudo-commands from other kinds must never reach the table
+		{TS: base, SessionID: "s1", Kind: "session_dedup", Tool: "Read", Command: "read /app/h.go", TokensBefore: 9000, TokensAfter: 20},
+		{TS: base, SessionID: "s1", Kind: "post_compress", Tool: "Grep", Command: "grep pattern", TokensBefore: 8000, TokensAfter: 20},
+	}
+	for _, ev := range events {
+		if err := l.RecordHookEvent(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	since := base.Add(-time.Hour)
+
+	top, err := l.TopCommands(since, "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(top) != 3 {
+		t.Fatalf("top = %+v, want exactly the 3 command-kind rows", top)
+	}
+	for _, c := range top {
+		if c.Command == "read /app/h.go" || c.Command == "grep pattern" {
+			t.Errorf("pseudo-command leaked into the top table: %q", c.Command)
+		}
+	}
+
+	top, err = l.TopCommands(since, "s1", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(top) != 1 || top[0].Command != "go test" {
+		t.Errorf("session-scoped top = %+v", top)
 	}
 }
 

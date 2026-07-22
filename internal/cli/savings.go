@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/hoophq/julius/internal/ledger"
@@ -12,11 +14,34 @@ import (
 
 func newSavingsCmd() *cobra.Command {
 	var days int
+	var jsonOut, current bool
+	var sessionID string
 	cmd := &cobra.Command{
 		Use:   "savings",
 		Short: "Show token savings and usage",
-		Args:  cobra.NoArgs,
+		Long: `Show token savings and usage.
+
+Estimated savings are reported per kind — commands (wrapper-filtered),
+native-tool compression (PostToolUse), and session dedup — and never
+blended with the exact, provider-reported API usage.
+
+--current and --session scope the estimate sections to one Claude Code
+session. Session totals include subagent activity within that session,
+and rows recorded without session attribution (older julius versions,
+runs outside a session) are excluded and disclosed, never guessed. The
+API-usage and proxy sections are app-scoped, not session-scoped, and are
+omitted from session views.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if current {
+				if sessionID != "" {
+					return fmt.Errorf("--current and --session are mutually exclusive")
+				}
+				sessionID = os.Getenv("CLAUDE_CODE_SESSION_ID")
+				if sessionID == "" {
+					return fmt.Errorf("not inside a Claude Code session (CLAUDE_CODE_SESSION_ID is unset)")
+				}
+			}
 			l, err := ledger.Open(ledger.DefaultPath())
 			if err != nil {
 				return fmt.Errorf("open ledger: %w", err)
@@ -24,57 +49,361 @@ func newSavingsCmd() *cobra.Command {
 			defer l.Close()
 
 			since := time.Now().AddDate(0, 0, -days)
-			tot, err := l.HookTotals(since)
-			if err != nil {
-				return err
+			if jsonOut {
+				return renderSavingsJSON(l, since, days, sessionID)
 			}
-
-			fmt.Printf("%s %s\n\n", ui.Title("Command-output savings"), ui.Dim(fmt.Sprintf("· estimates · last %dd", days)))
-			if tot.Events == 0 {
-				fmt.Println("  no filtered commands recorded yet")
-				fmt.Printf("\n  %s\n", ui.Dim("run `julius init` to install the Claude Code hooks, or prefix commands manually: julius git status"))
-				renderAPIUsage(l, since, days)
-				renderProxySavings(l, since, days)
-				return nil
-			}
-
-			pct := 0.0
-			if tot.TokensBefore > 0 {
-				pct = float64(tot.Saved()) / float64(tot.TokensBefore) * 100
-			}
-			fmt.Printf("  commands   %s   tokens %s %s %s\n",
-				ui.Bold(fmt.Sprintf("%d", tot.Events)),
-				fmtTokens(tot.TokensBefore), ui.Dim("→"), fmtTokens(tot.TokensAfter))
-			fmt.Printf("  saved      %s %s  %s\n",
-				ui.Good(fmtTokens(tot.Saved())), ui.Pct(pct), ui.Meter(pct, 24))
-			if tot.TokensBefore/max(tot.Events, 1) < 150 {
-				fmt.Printf("\n  %s\n", ui.Dim("note: mostly quiet commands in this window — savings scale with output volume"))
-			}
-
-			top, err := l.TopCommands(since, 10)
-			if err != nil {
-				return err
-			}
-			if len(top) > 0 {
-				maxSaved := top[0].Saved()
-				fmt.Printf("\n  %s\n", ui.Dim(fmt.Sprintf("%-30s %5s %8s  %5s", "command", "runs", "saved", "avg%")))
-				for _, c := range top {
-					cmdPct := 0.0
-					if c.TokensBefore > 0 {
-						cmdPct = float64(c.Saved()) / float64(c.TokensBefore) * 100
-					}
-					fmt.Printf("  %-30s %5d %8s  %s  %s\n",
-						truncate(c.Command, 30), c.Events, fmtTokens(c.Saved()), ui.Pct(cmdPct),
-						ui.Bar(c.Saved(), maxSaved, 10))
-				}
-			}
-			renderAPIUsage(l, since, days)
-			renderProxySavings(l, since, days)
-			return nil
+			return renderSavings(l, since, days, sessionID)
 		},
 	}
 	cmd.Flags().IntVar(&days, "days", 30, "look-back window in days")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "machine-readable output (versioned, basis-labeled per section)")
+	cmd.Flags().BoolVar(&current, "current", false, "scope to the running Claude Code session")
+	cmd.Flags().StringVar(&sessionID, "session", "", "scope to a session id")
 	return cmd
+}
+
+// estimate kinds, mapped once: everything else is reported as-is under
+// "unattributed" — an unknown kind is disclosed, never folded into a
+// known bucket.
+const (
+	kindCommands   = "commands"
+	kindNativeTool = "native-tool"
+	kindDedup      = "session-dedup"
+)
+
+func kindBucket(kind string) string {
+	switch kind {
+	case "command", "rewrite":
+		return kindCommands
+	case "post_compress":
+		return kindNativeTool
+	case "session_dedup":
+		return kindDedup
+	}
+	return ""
+}
+
+// estBreakdown is the per-kind aggregate behind both output modes.
+type estBreakdown struct {
+	commands     ledger.Totals
+	nativeTool   ledger.Totals
+	dedup        ledger.Totals
+	unattributed ledger.Totals // unknown kinds
+	total        ledger.Totals
+}
+
+func loadBreakdown(l *ledger.Ledger, since time.Time, sessionID string) (estBreakdown, error) {
+	var b estBreakdown
+	kinds, err := l.HookKindTotals(since, sessionID)
+	if err != nil {
+		return b, err
+	}
+	for _, k := range kinds {
+		switch kindBucket(k.Kind) {
+		case kindCommands:
+			b.commands = addTotals(b.commands, k.Totals)
+		case kindNativeTool:
+			b.nativeTool = addTotals(b.nativeTool, k.Totals)
+		case kindDedup:
+			b.dedup = addTotals(b.dedup, k.Totals)
+		default:
+			b.unattributed = addTotals(b.unattributed, k.Totals)
+		}
+		b.total = addTotals(b.total, k.Totals)
+	}
+	return b, nil
+}
+
+func addTotals(a, b ledger.Totals) ledger.Totals {
+	return ledger.Totals{
+		Events:       a.Events + b.Events,
+		TokensBefore: a.TokensBefore + b.TokensBefore,
+		TokensAfter:  a.TokensAfter + b.TokensAfter,
+	}
+}
+
+func savedPct(t ledger.Totals) float64 {
+	if t.TokensBefore == 0 {
+		return 0
+	}
+	return float64(t.Saved()) / float64(t.TokensBefore) * 100
+}
+
+func renderSavings(l *ledger.Ledger, since time.Time, days int, sessionID string) error {
+	window := fmt.Sprintf("· estimates · last %dd", days)
+	if sessionID != "" {
+		window += " · session " + sessionID
+	}
+
+	b, err := loadBreakdown(l, since, sessionID)
+	if err != nil {
+		return err
+	}
+	if b.total.Events == 0 {
+		fmt.Printf("%s %s\n\n", ui.Title("Commands"), ui.Dim(window))
+		fmt.Println("  no savings recorded yet")
+		fmt.Printf("\n  %s\n", ui.Dim("run `julius init` to install the Claude Code hooks, or prefix commands manually: julius git status"))
+		renderSessionFooter(l, since, sessionID)
+		if sessionID == "" {
+			renderAPIUsage(l, since, days)
+			renderProxySavings(l, since, days)
+		}
+		return nil
+	}
+
+	// Commands: the wrapper surface. The top table lives here and holds
+	// only command rows — pseudo-commands from other kinds never mix in.
+	fmt.Printf("%s %s\n\n", ui.Title("Commands"), ui.Dim(window))
+	if b.commands.Events == 0 {
+		fmt.Println("  none recorded in this window")
+	} else {
+		renderEstTotals("commands", b.commands)
+		if b.commands.TokensBefore/max(b.commands.Events, 1) < 150 {
+			fmt.Printf("\n  %s\n", ui.Dim("note: mostly quiet commands in this window — savings scale with output volume"))
+		}
+		top, err := l.TopCommands(since, sessionID, 10)
+		if err != nil {
+			return err
+		}
+		if len(top) > 0 {
+			maxSaved := top[0].Saved()
+			fmt.Printf("\n  %s\n", ui.Dim(fmt.Sprintf("%-30s %5s %8s  %5s", "command", "runs", "saved", "avg%")))
+			for _, c := range top {
+				fmt.Printf("  %-30s %5d %8s  %s  %s\n",
+					truncate(c.Command, 30), c.Events, fmtTokens(c.Saved()), ui.Pct(savedPct(c.Totals)),
+					ui.Bar(c.Saved(), maxSaved, 10))
+			}
+		}
+	}
+
+	if b.nativeTool.Events > 0 {
+		fmt.Printf("\n%s %s\n\n", ui.Title("Native-tool compression"), ui.Dim(window))
+		renderEstTotals("results", b.nativeTool)
+		if err := renderToolRows(l, since, "post_compress", sessionID); err != nil {
+			return err
+		}
+	}
+
+	if b.dedup.Events > 0 {
+		fmt.Printf("\n%s %s\n\n", ui.Title("Session dedup"), ui.Dim(window))
+		renderEstTotals("repeats", b.dedup)
+		if err := renderToolRows(l, since, "session_dedup", sessionID); err != nil {
+			return err
+		}
+	}
+
+	if b.unattributed.Events > 0 {
+		fmt.Printf("\n%s %s\n\n", ui.Title("Unattributed"), ui.Dim(window+" · rows from older julius versions"))
+		renderEstTotals("events", b.unattributed)
+	}
+
+	renderSessionFooter(l, since, sessionID)
+	if sessionID == "" {
+		renderAPIUsage(l, since, days)
+		renderProxySavings(l, since, days)
+	}
+	return nil
+}
+
+// renderEstTotals prints the two-line count/saved summary every estimate
+// section shares.
+func renderEstTotals(noun string, t ledger.Totals) {
+	fmt.Printf("  %-10s %s   tokens %s %s %s\n",
+		noun, ui.Bold(fmt.Sprintf("%d", t.Events)),
+		fmtTokens(t.TokensBefore), ui.Dim("→"), fmtTokens(t.TokensAfter))
+	pct := savedPct(t)
+	fmt.Printf("  saved      %s %s  %s\n",
+		ui.Good(fmtTokens(t.Saved())), ui.Pct(pct), ui.Meter(pct, 24))
+}
+
+func renderToolRows(l *ledger.Ledger, since time.Time, kind, sessionID string) error {
+	tools, err := l.HookToolTotals(since, kind, sessionID)
+	if err != nil {
+		return err
+	}
+	if len(tools) < 2 && (len(tools) == 0 || tools[0].Tool != "") {
+		return nil // a single attributed tool repeats the summary line
+	}
+	fmt.Printf("\n  %s\n", ui.Dim(fmt.Sprintf("%-16s %6s %8s  %5s", "tool", "count", "saved", "avg%")))
+	for _, tt := range tools {
+		name := tt.Tool
+		if name == "" {
+			name = "unattributed"
+		}
+		fmt.Printf("  %-16s %6d %8s  %s\n",
+			truncate(name, 16), tt.Events, fmtTokens(tt.Saved()), ui.Pct(savedPct(tt.Totals)))
+	}
+	return nil
+}
+
+// renderSessionFooter discloses what a session view cannot see: rows with
+// no session attribution (excluded, not guessed) and the subagent scope
+// of session ids.
+func renderSessionFooter(l *ledger.Ledger, since time.Time, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	fmt.Printf("\n  %s\n", ui.Dim("session totals include subagent activity within the session"))
+	if noSess, err := l.HookNoSessionTotals(since); err == nil && noSess.Events > 0 {
+		fmt.Printf("  %s\n", ui.Dim(fmt.Sprintf(
+			"%d event(s) in this window carry no session attribution and are excluded", noSess.Events)))
+	}
+	fmt.Printf("  %s\n", ui.Dim("API usage and proxy compression are app-scoped, not session-scoped — omitted"))
+}
+
+// JSON output, version 1. Every section carries an explicit basis so
+// consumers cannot blend estimated and exact numbers; dollar figures are
+// deliberately absent (pricing is dated — see `julius pricing`).
+type savingsJSONTotals struct {
+	Events       int `json:"events"`
+	TokensBefore int `json:"tokens_before"`
+	TokensAfter  int `json:"tokens_after"`
+	Saved        int `json:"saved"`
+}
+
+type savingsJSONToolRow struct {
+	Tool string `json:"tool"`
+	savingsJSONTotals
+}
+
+type savingsJSONCommandRow struct {
+	Command string `json:"command"`
+	savingsJSONTotals
+}
+
+type savingsJSONEstimate struct {
+	Basis string `json:"basis"`
+	savingsJSONTotals
+	ByTool      []savingsJSONToolRow    `json:"by_tool,omitempty"`
+	TopCommands []savingsJSONCommandRow `json:"top_commands,omitempty"`
+}
+
+type savingsJSONAppRow struct {
+	App      string `json:"app"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	Calls    int    `json:"calls"`
+	Input    int    `json:"input_tokens"`
+	Output   int    `json:"output_tokens"`
+}
+
+type savingsJSONAPI struct {
+	Basis      string              `json:"basis"`
+	Calls      int                 `json:"calls"`
+	Input      int                 `json:"input_tokens"`
+	Output     int                 `json:"output_tokens"`
+	CacheRead  int                 `json:"cache_read_tokens"`
+	CacheWrite int                 `json:"cache_write_tokens"`
+	ByApp      []savingsJSONAppRow `json:"by_app,omitempty"`
+}
+
+type savingsJSONDoc struct {
+	Version          int                  `json:"version"`
+	Since            string               `json:"since"`
+	Days             int                  `json:"days"`
+	SessionID        string               `json:"session_id,omitempty"`
+	ExcludedNoSess   *savingsJSONTotals   `json:"excluded_no_session_id,omitempty"`
+	Commands         *savingsJSONEstimate `json:"commands,omitempty"`
+	NativeTool       *savingsJSONEstimate `json:"native_tool,omitempty"`
+	SessionDedup     *savingsJSONEstimate `json:"session_dedup,omitempty"`
+	Unattributed     *savingsJSONEstimate `json:"unattributed,omitempty"`
+	APIUsage         *savingsJSONAPI      `json:"api_usage,omitempty"`
+	ProxyCompression *savingsJSONEstimate `json:"proxy_compression,omitempty"`
+}
+
+const (
+	basisEstimate = "estimate"
+	basisExact    = "provider_exact"
+)
+
+func jsonTotals(t ledger.Totals) savingsJSONTotals {
+	return savingsJSONTotals{
+		Events: t.Events, TokensBefore: t.TokensBefore, TokensAfter: t.TokensAfter, Saved: t.Saved(),
+	}
+}
+
+func renderSavingsJSON(l *ledger.Ledger, since time.Time, days int, sessionID string) error {
+	b, err := loadBreakdown(l, since, sessionID)
+	if err != nil {
+		return err
+	}
+	doc := savingsJSONDoc{
+		Version:   1,
+		Since:     since.UTC().Format(time.RFC3339),
+		Days:      days,
+		SessionID: sessionID,
+	}
+
+	if b.commands.Events > 0 {
+		sec := &savingsJSONEstimate{Basis: basisEstimate, savingsJSONTotals: jsonTotals(b.commands)}
+		top, err := l.TopCommands(since, sessionID, 10)
+		if err != nil {
+			return err
+		}
+		for _, c := range top {
+			sec.TopCommands = append(sec.TopCommands, savingsJSONCommandRow{Command: c.Command, savingsJSONTotals: jsonTotals(c.Totals)})
+		}
+		doc.Commands = sec
+	}
+	for _, s := range []struct {
+		kind string
+		tot  ledger.Totals
+		dst  **savingsJSONEstimate
+	}{
+		{"post_compress", b.nativeTool, &doc.NativeTool},
+		{"session_dedup", b.dedup, &doc.SessionDedup},
+	} {
+		if s.tot.Events == 0 {
+			continue
+		}
+		sec := &savingsJSONEstimate{Basis: basisEstimate, savingsJSONTotals: jsonTotals(s.tot)}
+		tools, err := l.HookToolTotals(since, s.kind, sessionID)
+		if err != nil {
+			return err
+		}
+		for _, tt := range tools {
+			name := tt.Tool
+			if name == "" {
+				name = "unattributed"
+			}
+			sec.ByTool = append(sec.ByTool, savingsJSONToolRow{Tool: name, savingsJSONTotals: jsonTotals(tt.Totals)})
+		}
+		*s.dst = sec
+	}
+	if b.unattributed.Events > 0 {
+		doc.Unattributed = &savingsJSONEstimate{Basis: basisEstimate, savingsJSONTotals: jsonTotals(b.unattributed)}
+	}
+
+	if sessionID != "" {
+		if noSess, err := l.HookNoSessionTotals(since); err == nil && noSess.Events > 0 {
+			t := jsonTotals(noSess)
+			doc.ExcludedNoSess = &t
+		}
+	} else {
+		api, err := l.APIUsage(since)
+		if err == nil && api.Calls > 0 {
+			sec := &savingsJSONAPI{
+				Basis: basisExact, Calls: api.Calls, Input: api.Input, Output: api.Output,
+				CacheRead: api.CacheRead, CacheWrite: api.CacheWrite,
+			}
+			if byApp, err := l.APIUsageByApp(since, 10); err == nil {
+				for _, a := range byApp {
+					sec.ByApp = append(sec.ByApp, savingsJSONAppRow{
+						App: a.AppTag, Provider: a.Provider, Model: a.Model,
+						Calls: a.Calls, Input: a.Input, Output: a.Output,
+					})
+				}
+			}
+			doc.APIUsage = sec
+		}
+		if prox, err := l.ProxySavingsTotals(since); err == nil && prox.Events > 0 {
+			doc.ProxyCompression = &savingsJSONEstimate{Basis: basisEstimate, savingsJSONTotals: jsonTotals(prox)}
+		}
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(doc)
 }
 
 // renderProxySavings prints request-compression savings. Estimates on the
@@ -86,16 +415,8 @@ func renderProxySavings(l *ledger.Ledger, since time.Time, days int) {
 	if err != nil || tot.Events == 0 {
 		return
 	}
-	pct := 0.0
-	if tot.TokensBefore > 0 {
-		pct = float64(tot.Saved()) / float64(tot.TokensBefore) * 100
-	}
 	fmt.Printf("\n%s %s\n\n", ui.Title("Proxy compression"), ui.Dim(fmt.Sprintf("· estimates · last %dd", days)))
-	fmt.Printf("  requests   %s   tokens %s %s %s\n",
-		ui.Bold(fmt.Sprintf("%d", tot.Events)),
-		fmtTokens(tot.TokensBefore), ui.Dim("→"), fmtTokens(tot.TokensAfter))
-	fmt.Printf("  saved      %s %s  %s\n",
-		ui.Good(fmtTokens(tot.Saved())), ui.Pct(pct), ui.Meter(pct, 24))
+	renderEstTotals("requests", tot)
 }
 
 // renderAPIUsage prints the proxy surface. The two surfaces are reported
