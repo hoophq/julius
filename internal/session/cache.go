@@ -4,8 +4,9 @@
 //
 // Safety model: the cache never substitutes for fresh data — callers always
 // hold the fresh output and only use the cache to decide how much of it to
-// forward. Keys are scoped by session ID, so one session can never dedup
-// against another's history.
+// forward. Keys are scoped per agent context (session ID, plus an agent
+// discriminator for subagent events — see ScopeID), so one context can
+// never dedup against another's history.
 package session
 
 import (
@@ -21,6 +22,9 @@ const (
 	maxEntryBytes = 1 << 20 // 1MB
 	// purgeAfter is how long a session directory survives after its last write.
 	purgeAfter = 7 * 24 * time.Hour
+	// maxScopeRunes caps a scope directory name; ScopeID must keep its
+	// agent discriminator inside this window or contexts would merge.
+	maxScopeRunes = 64
 )
 
 // Cache is a per-session content store on disk.
@@ -122,7 +126,7 @@ func sanitize(s string) string {
 		default:
 			out = append(out, '_')
 		}
-		if len(out) >= 64 {
+		if len(out) >= maxScopeRunes {
 			break
 		}
 	}

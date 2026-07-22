@@ -139,7 +139,8 @@ less precision.
 A field report — the same content re-entering context despite a dedup
 marker claiming it was "above", traced to a doubled hook registration —
 forced a pass over what the session cache is allowed to promise. Five
-decisions came out of it:
+decisions came out of it — four below, and a fifth (per-agent-context
+cache scoping) that graduated to its own section further down:
 
 **Cache entries record provenance.** Every entry stores the form the
 output actually entered context in (verbatim, filtered, or diff) plus the
@@ -173,9 +174,48 @@ the model will actually read. Accepted cost: no savings on interior pipe
 stages, and they are excluded from scan/coverage accounting rather than
 counted as misses.
 
-**Per-agent-context cache scoping is deferred (ATR-150).** Subagents
-share a session id with their parent but not a context window, so a
-parent-side cache hit can suppress output a subagent never saw. The
-`session.ScopeID` seam exists for exactly this split; wiring a reliable
-per-context discriminator through the hook payload is its own change and
-ships separately.
+## Per-agent-context cache scoping (ATR-150, 2026-07-22)
+
+Subagents share a session id with their parent but not a context window,
+so a parent-side cache hit could suppress output a subagent never saw.
+The `session.ScopeID` seam now closes that gap: events carrying an
+`agent_id` get their own cache scope (`sessionID + "-" + shortHash`),
+events without one keep the plain session scope.
+
+The discriminator was validated against live PostToolUse payloads
+(captured 2026-07-22, sessions with one and with two subagents):
+
+- Main-context events carry **no `agent_id` key at all**; every subagent
+  event carries a stable `agent_id` (plus `agent_type`), unique per
+  subagent within the session.
+- `transcript_path` does **not** discriminate: subagent events carry the
+  parent's transcript path verbatim. The parameter stays in the seam so a
+  future payload change is again a one-function-body fix.
+- Payloads from Claude Code versions predating `agent_id` decode to an
+  empty discriminator and keep today's session-wide scope — degraded, not
+  broken.
+
+The trade-off — scoping gives up cross-agent suppression — was measured
+before accepting: across all local transcripts, 313 of 343 delivered
+dedup markers (91%) landed in subagent contexts, and in every captured
+case the falsely-suppressed subagent immediately re-read the file with
+offset/limit. Cross-agent "savings" were therefore largely fake — the
+agent paid the marker, the full content, and a wasted round-trip. Honest
+scoping is the default with no opt-out.
+
+Two hardening consequences shipped with it:
+
+- **The discriminator survives the directory-name cap.** Scope strings
+  become directories via `sanitize`, which truncates at 64 runes. A
+  session id long enough to push the agent suffix past that cap would
+  silently merge contexts again, so an overlong session id is folded into
+  a wider hash instead of carried verbatim — session id length is no more
+  contractual than agent id format.
+- **The entry magic bumped (julius1 → julius2).** Entries written before
+  scoping may have been committed by a subagent into the shared session
+  scope, so they can no longer attest same-context provenance. They now
+  load as FormUnknown — one forfeited dedup per key after upgrading,
+  never a marker backed by the wrong context.
+
+Purging is unaffected: each scope is one flat directory under the session
+root, aged independently by the same 7-day rule.
