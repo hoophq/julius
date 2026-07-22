@@ -68,6 +68,10 @@ func bashEvent(sid, command, stdout string) string {
 }
 
 func bashEventID(sid, toolUseID, command, stdout string) string {
+	return bashEventAgent(sid, "", toolUseID, command, stdout)
+}
+
+func bashEventAgent(sid, agentID, toolUseID, command, stdout string) string {
 	ev := map[string]any{
 		"session_id": sid, "tool_name": "Bash",
 		"tool_input": map[string]any{"command": command},
@@ -75,6 +79,9 @@ func bashEventID(sid, toolUseID, command, stdout string) string {
 			"stdout": stdout, "stderr": "", "interrupted": false,
 			"isImage": false, "noOutputExpected": false,
 		},
+	}
+	if agentID != "" {
+		ev["agent_id"] = agentID
 	}
 	if toolUseID != "" {
 		ev["tool_use_id"] = toolUseID
@@ -89,6 +96,13 @@ func readEvent(sid, path, content string, offset int) string {
 }
 
 func readEventID(sid, toolUseID, path, content string, offset int) string {
+	return readEventAgent(sid, "", toolUseID, path, content, offset)
+}
+
+// readEventAgent mirrors the live payload split: main-context events omit
+// agent_id, subagent events carry one alongside the parent's session_id
+// and transcript_path.
+func readEventAgent(sid, agentID, toolUseID, path, content string, offset int) string {
 	ti := map[string]any{"file_path": path}
 	if offset > 0 {
 		ti["offset"] = offset
@@ -103,6 +117,9 @@ func readEventID(sid, toolUseID, path, content string, offset int) string {
 				"totalLines": len(strings.Split(content, "\n")),
 			},
 		},
+	}
+	if agentID != "" {
+		ev["agent_id"] = agentID
 	}
 	if toolUseID != "" {
 		ev["tool_use_id"] = toolUseID
@@ -367,6 +384,61 @@ func TestPostReadCrossSessionIsolated(t *testing.T) {
 	runPost(t, readEvent(t.Name()+"-A", "/app/h.go", content, 0), nil)
 	if u := runPost(t, readEvent(t.Name()+"-B", "/app/h.go", content, 0), nil); u != nil {
 		t.Errorf("different session must not dedup, got %v", u)
+	}
+}
+
+func TestPostReadCrossAgentIsolated(t *testing.T) {
+	content := bigFile("v1")
+	sid := t.Name()
+
+	// Parent reads the file; a subagent's first read of the same file under
+	// the shared session_id must pass through untouched — the content was
+	// never in the subagent's context.
+	runPost(t, readEventAgent(sid, "", "toolu_01", "/app/h.go", content, 0), nil)
+	if u := runPost(t, readEventAgent(sid, "a877c50488d25a006", "toolu_02", "/app/h.go", content, 0), nil); u != nil {
+		t.Fatalf("subagent's first read must not dedup against the parent, got %v", u)
+	}
+
+	// Within its own context the subagent dedups normally.
+	u := runPost(t, readEventAgent(sid, "a877c50488d25a006", "toolu_03", "/app/h.go", content, 0), nil)
+	if u == nil {
+		t.Fatal("subagent re-read of its own earlier read must dedup")
+	}
+	if replaced := u["file"].(map[string]any)["content"].(string); !strings.Contains(replaced, "unchanged since your last read") {
+		t.Errorf("bad marker: %q", replaced)
+	}
+
+	// A second subagent is a third context: no dedup against parent or sibling.
+	if u := runPost(t, readEventAgent(sid, "ac0377d08cbbb380a", "toolu_04", "/app/h.go", content, 0), nil); u != nil {
+		t.Errorf("sibling subagent must not dedup against other contexts, got %v", u)
+	}
+
+	// And the parent's own re-read still dedups against its own first read,
+	// untouched by the subagent activity in between.
+	if u := runPost(t, readEventAgent(sid, "", "toolu_05", "/app/h.go", content, 0), nil); u == nil {
+		t.Error("parent re-read must still dedup within the main context")
+	}
+}
+
+func TestPostBashCrossAgentIsolated(t *testing.T) {
+	out := uniqueProse()
+	sid := t.Name()
+
+	// Parent runs a command; a subagent running the identical command under
+	// the shared session_id must get the real output, not a rerun marker
+	// pointing at a result only the parent's context holds.
+	runPost(t, bashEventAgent(sid, "", "toolu_01", "sensor-sweep --site charlie", out), nil)
+	if u := runPost(t, bashEventAgent(sid, "a877c50488d25a006", "toolu_02", "sensor-sweep --site charlie", out), nil); u != nil {
+		t.Fatalf("subagent's first run must not dedup against the parent, got %v", u)
+	}
+
+	// Within its own context the subagent's rerun dedups normally.
+	u := runPost(t, bashEventAgent(sid, "a877c50488d25a006", "toolu_03", "sensor-sweep --site charlie", out), nil)
+	if u == nil {
+		t.Fatal("subagent rerun of its own earlier command must dedup")
+	}
+	if stdout := u["stdout"].(string); !strings.Contains(stdout, "identical to the previous run") {
+		t.Errorf("bad marker: %q", stdout)
 	}
 }
 
