@@ -16,10 +16,11 @@ type File struct {
 
 // Spec is a declarative filter. Stages run in this order:
 //
-//	strip_ansi → compact_json → replace → respond → keep_lines →
-//	drop_lines → max_line_length → head/tail → if_empty
+//	strip_ansi → compact_json → py_traceback → replace → respond →
+//	keep_lines → drop_lines → max_line_length → head/tail → if_empty
 //
-// compact_json short-circuits the remaining stages when the body is JSON.
+// compact_json short-circuits the remaining stages when the body is JSON;
+// py_traceback rewrites traceback blocks in place and falls through.
 type Spec struct {
 	Description  string        `toml:"description"`
 	Command      string        `toml:"command"`       // regex matched against the command line
@@ -27,6 +28,7 @@ type Spec struct {
 	StripANSI    bool          `toml:"strip_ansi"`
 	MergeStderr  bool          `toml:"merge_stderr"`
 	CompactJSON  bool          `toml:"compact_json"` // structurally compact a JSON body before the line stages
+	PyTraceback  bool          `toml:"py_traceback"` // collapse CPython traceback blocks (code stage)
 	Replace      []Replacement `toml:"replace"`
 	Respond      []Responder   `toml:"respond"`
 	KeepLines    []string      `toml:"keep_lines"`
@@ -157,8 +159,15 @@ func (s *Spec) MatchCommand(cmd string) bool { return s.cmdRe.MatchString(cmd) }
 
 // MatchOutput reports whether raw output looks like the format this spec
 // filters, independent of which command produced it. Specs without
-// detect_output patterns never match by content.
+// detect_output patterns never match by content. CRLF is normalized the
+// same way Apply does it: (?m)$ never matches before \r, so without the
+// normalization every $-anchored detect pattern silently fails on
+// Windows-style output.
 func (s *Spec) MatchOutput(text string) bool {
+	if len(s.detRe) == 0 {
+		return false
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
 	for _, re := range s.detRe {
 		if re.MatchString(text) {
 			return true
@@ -183,6 +192,15 @@ func (s *Spec) Apply(raw string, exitCode int) Result {
 	if s.CompactJSON {
 		if r := CompactJSON(out); r.Applied {
 			return r
+		}
+	}
+
+	// Traceback collapsing rewrites recognized blocks in place and falls
+	// through: everything else in the output is untouched and the later
+	// line stages still apply.
+	if s.PyTraceback {
+		if r := CollapseTracebacks(out); r.Applied {
+			out = r.Output
 		}
 	}
 

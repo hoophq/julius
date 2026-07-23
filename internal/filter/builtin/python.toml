@@ -1,0 +1,87 @@
+# python — interpreter output. Arbitrary program output passes through
+# untouched (nothing can honestly be dropped line-by-line); the one
+# recognizable, compressible format is the CPython traceback, collapsed
+# to its actionable frames by the py_traceback code stage. detect_output
+# lets the post hook apply this to any output containing a traceback —
+# heredoc forms, unwrapped runs, another tool echoing a Python error.
+# pytest and py-install match first in registry order, so `python -m
+# pytest` / `python -m pip` keep their own filters.
+[filters.python]
+description = "python: collapse long tracebacks, keep exception and nearest frames"
+# whitespace-or-end after the token: \b alone would also match
+# python3-config and friends
+command = '^python[0-9.]*(\s|$)'
+detect_output = ['^Traceback \(most recent call last\):$']
+strip_ansi = true
+# tracebacks are written to stderr — without the merge the filter never
+# sees them
+merge_stderr = true
+py_traceback = true
+
+[[filters.python.tests]]
+name = "deep traceback collapses to entry and deepest frames"
+exit_code = 1
+input = """
+Traceback (most recent call last):
+  File "/app/main.py", line 42, in <module>
+    cli.run()
+  File "/venv/lib/python3.12/site-packages/fw/cli.py", line 88, in run
+    self.dispatch(args)
+  File "/venv/lib/python3.12/site-packages/fw/router.py", line 51, in dispatch
+    handler(request)
+  File "/venv/lib/python3.12/site-packages/fw/middleware.py", line 130, in __call__
+    return self.next(request)
+  File "/venv/lib/python3.12/site-packages/fw/middleware.py", line 130, in __call__
+    return self.next(request)
+  File "/app/handlers/orders.py", line 27, in create_order
+    total = subtotal / quantity
+             ~~~~~~~~~^~~~~~~~~~
+ZeroDivisionError: division by zero
+"""
+want = """
+Traceback (most recent call last):
+  File "/app/main.py", line 42, in <module>
+    cli.run()
+  [julius: 2 frames omitted]
+  File "/venv/lib/python3.12/site-packages/fw/middleware.py", line 130, in __call__
+    return self.next(request)
+  File "/venv/lib/python3.12/site-packages/fw/middleware.py", line 130, in __call__
+    return self.next(request)
+  File "/app/handlers/orders.py", line 27, in create_order
+    total = subtotal / quantity
+             ~~~~~~~~~^~~~~~~~~~
+ZeroDivisionError: division by zero
+"""
+
+[[filters.python.tests]]
+name = "short traceback passes untouched"
+exit_code = 1
+input = """
+Traceback (most recent call last):
+  File "/app/main.py", line 3, in <module>
+    run()
+  File "/app/lib.py", line 9, in run
+    raise ValueError("boom")
+ValueError: boom
+"""
+want = """
+Traceback (most recent call last):
+  File "/app/main.py", line 3, in <module>
+    run()
+  File "/app/lib.py", line 9, in run
+    raise ValueError("boom")
+ValueError: boom
+"""
+
+[[filters.python.tests]]
+name = "program output passes untouched"
+input = """
+processed 120 rows
+  File-shaped line the program printed itself, line 1
+done
+"""
+want = """
+processed 120 rows
+  File-shaped line the program printed itself, line 1
+done
+"""

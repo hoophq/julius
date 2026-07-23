@@ -208,6 +208,16 @@ func buildCorpus() []corpusCase {
 		fmt.Fprintf(&pnpmls, "dep-%03d 1.%d.%d\n", i, i%9, i%17)
 	}
 
+	var pytb strings.Builder
+	pytb.WriteString("Traceback (most recent call last):\n")
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&pytb, "  File \"/venv/lib/python3.12/site-packages/django/core/handlers/layer%02d.py\", line %d, in inner\n", i, i*9+14)
+		pytb.WriteString("    response = get_response(request)\n")
+	}
+	pytb.WriteString("  File \"/app/orders/views.py\", line 31, in create\n")
+	pytb.WriteString("    total = subtotal / quantity\n")
+	pytb.WriteString("ZeroDivisionError: division by zero\n")
+
 	return []corpusCase{
 		{"go test ./...", goTest.String(), 85},
 		{"pytest", pytest.String(), 75},
@@ -239,6 +249,7 @@ func buildCorpus() []corpusCase {
 		{"bundle install", bundle.String(), 90},
 		{"npx playwright test", pw.String(), 90},
 		{"pnpm list --depth 1", pnpmls.String(), 50},
+		{"python3 manage.py check", pytb.String(), 80},
 	}
 }
 
