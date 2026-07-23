@@ -8,7 +8,9 @@
 # pytest` / `python -m pip` keep their own filters.
 [filters.python]
 description = "python: collapse long tracebacks, keep exception and nearest frames"
-command = '^python[0-9.]*\b'
+# whitespace-or-end after the token: \b alone would also match
+# python3-config and friends
+command = '^python[0-9.]*(\s|$)'
 detect_output = ['^Traceback \(most recent call last\):$']
 strip_ansi = true
 # tracebacks are written to stderr — without the merge the filter never

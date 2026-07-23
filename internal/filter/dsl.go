@@ -159,8 +159,15 @@ func (s *Spec) MatchCommand(cmd string) bool { return s.cmdRe.MatchString(cmd) }
 
 // MatchOutput reports whether raw output looks like the format this spec
 // filters, independent of which command produced it. Specs without
-// detect_output patterns never match by content.
+// detect_output patterns never match by content. CRLF is normalized the
+// same way Apply does it: (?m)$ never matches before \r, so without the
+// normalization every $-anchored detect pattern silently fails on
+// Windows-style output.
 func (s *Spec) MatchOutput(text string) bool {
+	if len(s.detRe) == 0 {
+		return false
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
 	for _, re := range s.detRe {
 		if re.MatchString(text) {
 			return true
