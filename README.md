@@ -43,7 +43,7 @@ julius savings
 ```
 
 ```
-Command-output savings · estimates · last 30d
+Commands · estimates · last 30d
 
   commands   214   tokens 182.4k → 31.1k
   saved      151.3k  83%  ████████████████████░░░░
@@ -51,8 +51,14 @@ Command-output savings · estimates · last 30d
   command                         runs    saved   avg%
   go test -v ./...                  12    48.2k   93%  ▪▪▪▪▪▪▪▪▪▪
   npm install                        4    22.1k   96%  ▪▪▪▪
-  ...
+
+Session dedup · estimates · last 30d
+
+  repeats    96   tokens 118.2k → 3.1k
+  saved      115.1k  97%  ███████████████████████░
 ```
+
+Savings are reported per kind — wrapper-filtered commands, native-tool compression, session dedup — so the numbers say where they came from. `--current` scopes the view to the running session (`--session <id>` for any other), and `--json` emits versioned machine-readable output where every section carries `"basis": "estimate"` or `"basis": "provider_exact"`, so the two can never be blended downstream.
 
 ## How it works
 

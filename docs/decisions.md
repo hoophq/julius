@@ -66,6 +66,33 @@ input but the provider-reported aggregate can't be told apart from
 and time-boxed introductory pricing is baked in at the table's as-of
 date.
 
+## Savings are reported per kind (ATR-154, 2026-07-22)
+
+The savings headline used to lump three different sources under
+"commands" — wrapper-filtered commands, native-tool compression, and
+session dedup — and the top-commands table mixed `read /path`
+pseudo-commands in with real commands. Corrected: three labeled estimate
+sections, and the top table draws only from command kinds. Unknown kinds
+and pre-attribution rows render as "unattributed" — reported as
+recorded, never folded into a known bucket.
+
+`--json` (versioned, v1) carries an explicit `basis` per section —
+`"estimate"` or `"provider_exact"` — so consumers cannot blend the two
+accounting regimes. Dollar figures are deliberately absent from JSON:
+pricing is dated, and the labeled cost line stays a human-surface
+rendering. JSON mode fails closed: a consumer cannot tell an omitted
+section from an errored query, so any query failure fails the command
+rather than shipping valid-looking JSON with a section silently missing.
+
+Per-session views (`--current` via `CLAUDE_CODE_SESSION_ID`, verified
+present in the Bash tool environment; `--session <id>` otherwise) scope
+the estimate sections only — API usage and proxy compression are
+app-scoped and omitted rather than misattributed. The wrapper now
+records the session id from that same variable; rows recorded without
+attribution are excluded from session views and disclosed by count,
+never guessed into a session. Session totals include subagent activity:
+subagents run inside the session, and their savings belong to it.
+
 ## Read results are never rewritten (2026-07-08)
 
 The PostToolUse processor compresses Bash, Grep (content mode), and Glob
