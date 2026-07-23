@@ -46,6 +46,7 @@ Stages run in this order; every field is optional except `command`:
 | `strip_ansi` | Remove ANSI escape sequences |
 | `merge_stderr` | Include stderr in the filtered text (default: stderr passes through untouched) |
 | `compact_json` | Structurally compact a JSON body — arrays capped, long values trimmed, null fields dropped — with a disclosure marker. When the body is JSON it short-circuits the line stages below (`replace` onward); non-JSON output falls through to them. Note: `merge_stderr` runs first, and merged stderr text usually makes the body non-JSON |
+| `py_traceback` | Collapse CPython traceback blocks to the entry frame, the deepest frames, and every non-frame line, behind a `[julius: N frames omitted]` marker. Rewrites blocks in place and falls through to the stages below; short tracebacks and frame-shaped lines outside a `Traceback` header are never touched |
 | `replace` | Line-by-line regex substitutions: `[{ pattern = '...', with = '...' }]` |
 | `respond` | Short-circuit: if `pattern` matches anywhere, the whole output becomes `message` (guard with `unless`) |
 | `keep_lines` | Keep only lines matching at least one regex |
