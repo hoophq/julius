@@ -5,7 +5,7 @@
 // Safety model: the cache never substitutes for fresh data — callers always
 // hold the fresh output and only use the cache to decide how much of it to
 // forward. Keys are scoped per agent context (session ID, plus an agent
-// discriminator for subagent events — see ScopeID), so one context can
+// discriminator for subagent events — see OpenScoped), so one context can
 // never dedup against another's history.
 package session
 
@@ -22,8 +22,9 @@ const (
 	maxEntryBytes = 1 << 20 // 1MB
 	// purgeAfter is how long a session directory survives after its last write.
 	purgeAfter = 7 * 24 * time.Hour
-	// maxScopeRunes caps a scope directory name; ScopeID must keep its
-	// agent discriminator inside this window or contexts would merge.
+	// maxScopeRunes caps the sanitized session component of a directory
+	// name; agent discriminators are appended after the cap so they can
+	// never be truncated away.
 	maxScopeRunes = 64
 )
 
@@ -44,14 +45,37 @@ func Root() string {
 	return filepath.Join(home, ".local", "share", "julius", "sessions")
 }
 
-// Open returns the cache for a session, creating its directory lazily.
-// An empty session ID yields a nil cache; all methods on a nil Cache are
-// safe no-ops, so callers never need to branch.
+// Open returns the cache for a session's main context, creating its
+// directory lazily. An empty session ID yields a nil cache; all methods
+// on a nil Cache are safe no-ops, so callers never need to branch.
 func Open(sessionID string) *Cache {
+	return OpenScoped(sessionID, "")
+}
+
+// OpenScoped returns the cache for one agent context. Subagents share
+// the parent's session id but not its context window, so an event
+// carrying an agent id gets its own directory: a dedup marker may only
+// point at content this context actually received. Events without an
+// agent id are the main context — including all events from versions
+// that predate the field, which therefore never split scopes.
+//
+// The discriminator is appended AFTER sanitize, separated by '.' — a
+// rune sanitize never emits — so no raw session id can name an
+// agent-context directory, and no truncation can eat the suffix. The
+// hash covers the raw session id as well as the agent id: sessions whose
+// sanitized names collide (overlong ids sharing a prefix) still get
+// distinct agent scopes, and the same agent id in two sessions never
+// shares a directory.
+func OpenScoped(sessionID, agentID string) *Cache {
 	if sessionID == "" {
 		return nil
 	}
-	return &Cache{dir: filepath.Join(Root(), sanitize(sessionID))}
+	dir := sanitize(sessionID)
+	if agentID != "" {
+		sum := sha256.Sum256([]byte(sessionID + "\x00" + agentID))
+		dir += "." + hex.EncodeToString(sum[:8])
+	}
+	return &Cache{dir: filepath.Join(Root(), dir)}
 }
 
 // Load returns the previously stored content for key, if any.

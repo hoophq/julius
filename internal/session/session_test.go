@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -27,68 +28,13 @@ func TestCacheRoundTripAndIsolation(t *testing.T) {
 	}
 }
 
-func TestScopeID(t *testing.T) {
-	const sid = "0908b841-b5b9-4d41-b211-1398ef90d195"
-
-	if got := ScopeID(sid, "", "/tmp/t.jsonl"); got != sid {
-		t.Errorf("main-context event must keep the plain session scope, got %q", got)
-	}
-	if got := ScopeID("", "a877c50488d25a006", ""); got != "" {
-		t.Errorf("empty session must stay empty (nil cache), got %q", got)
-	}
-
-	agentA := ScopeID(sid, "a877c50488d25a006", "/tmp/t.jsonl")
-	agentB := ScopeID(sid, "ac0377d08cbbb380a", "/tmp/t.jsonl")
-	if agentA == sid || agentB == sid {
-		t.Error("subagent events must not share the main-context scope")
-	}
-	if agentA == agentB {
-		t.Error("distinct agents must get distinct scopes")
-	}
-	if again := ScopeID(sid, "a877c50488d25a006", "/tmp/other.jsonl"); again != agentA {
-		t.Errorf("scope must be stable per agent and ignore transcript path: %q vs %q", again, agentA)
-	}
-	// The scope becomes a cache directory name: it must survive sanitize
-	// without truncation, or two agents could collide on a shared prefix.
-	if len(agentA) > maxScopeRunes || sanitize(agentA) != agentA {
-		t.Errorf("scope %q must be a sanitize-stable dir name", agentA)
-	}
-}
-
-func TestScopeIDOverlongSessionKeepsDiscriminator(t *testing.T) {
-	// Session id length is not contractual. If sanitize's cap ate the agent
-	// suffix, parent and subagents would silently merge back into one dir —
-	// the exact lie scoping exists to prevent.
-	for _, n := range []int{55, 56, 60, 63, 64, 65, 128} {
-		sid := strings.Repeat("s", n)
-		parent := sanitize(ScopeID(sid, "", ""))
-		agentA := sanitize(ScopeID(sid, "a877c50488d25a006", ""))
-		agentB := sanitize(ScopeID(sid, "ac0377d08cbbb380a", ""))
-		if agentA == parent || agentB == parent {
-			t.Errorf("len=%d: subagent dir collides with parent dir %q", n, parent)
-		}
-		if agentA == agentB {
-			t.Errorf("len=%d: sibling subagent dirs collide: %q", n, agentA)
-		}
-		if got := sanitize(ScopeID(sid, "a877c50488d25a006", "")); got != agentA {
-			t.Errorf("len=%d: scope not stable: %q vs %q", n, got, agentA)
-		}
-	}
-	// Two distinct overlong sessions sharing a truncation-length prefix
-	// must not share a subagent scope.
-	a := sanitize(ScopeID(strings.Repeat("s", 70)+"x", "a877c50488d25a006", ""))
-	b := sanitize(ScopeID(strings.Repeat("s", 70)+"y", "a877c50488d25a006", ""))
-	if a == b {
-		t.Errorf("distinct sessions with a shared prefix must not share a scope: %q", a)
-	}
-}
-
 func TestScopedCachesAreIsolated(t *testing.T) {
 	t.Setenv("JULIUS_SESSION_DIR", t.TempDir())
 	const sid = "session-x"
 
-	parent := Open(ScopeID(sid, "", ""))
-	agent := Open(ScopeID(sid, "a1b52df8a75f48edb", ""))
+	parent := Open(sid)
+	agent := OpenScoped(sid, "a1b52df8a75f48edb")
+	sibling := OpenScoped(sid, "ac0377d08cbbb380a")
 	parent.Store("read:/x.go", []byte("hello"))
 
 	if _, ok := agent.Load("read:/x.go"); ok {
@@ -97,6 +43,86 @@ func TestScopedCachesAreIsolated(t *testing.T) {
 	agent.Store("read:/x.go", []byte("hello"))
 	if got, ok := agent.Load("read:/x.go"); !ok || string(got) != "hello" {
 		t.Errorf("subagent scope must dedup within itself: %q, %v", got, ok)
+	}
+	if _, ok := sibling.Load("read:/x.go"); ok {
+		t.Error("sibling subagent must not see another agent's entries")
+	}
+	// stability: reopening the same context finds its own entries
+	if _, ok := OpenScoped(sid, "a1b52df8a75f48edb").Load("read:/x.go"); !ok {
+		t.Error("reopened agent scope must find its own entries")
+	}
+	if OpenScoped("", "a1b52df8a75f48edb") != nil {
+		t.Error("empty session must yield nil cache even with an agent id")
+	}
+	if OpenScoped(sid, "") == nil || filepath.Base(OpenScoped(sid, "").dir) != filepath.Base(parent.dir) {
+		t.Error("empty agent id must be the main-context cache")
+	}
+}
+
+// The dot separator is the namespace boundary: sanitize never emits '.',
+// so no raw session id — however crafted — can name an agent-context
+// directory. Regression for the flat "sid-hash" layout, where a raw
+// session id shaped like another session's derived scope collided.
+func TestScopedCacheNamespaceInjection(t *testing.T) {
+	t.Setenv("JULIUS_SESSION_DIR", t.TempDir())
+	const sid, agentID = "victim-session", "a877c50488d25a006"
+
+	agent := OpenScoped(sid, agentID)
+	agent.Store("read:/x.go", []byte("secret"))
+
+	derived := filepath.Base(agent.dir)
+	if !strings.Contains(derived, ".") {
+		t.Fatalf("derived dir %q must carry the dot separator", derived)
+	}
+	// Attack strings: the derived name itself, its pre-sanitize dot form,
+	// and its underscore twin. None may open the agent's directory.
+	for _, spoof := range []string{
+		derived,
+		strings.ReplaceAll(derived, ".", "_"),
+		sid + "-" + strings.SplitN(derived, ".", 2)[1],
+	} {
+		if _, ok := Open(spoof).Load("read:/x.go"); ok {
+			t.Errorf("raw session id %q reached another context's cache", spoof)
+		}
+	}
+}
+
+// Session id length and charset are not contractual. Discriminators are
+// appended after sanitize's cap, so no length can truncate them away, and
+// the hash covers the raw session id, so sessions whose sanitized names
+// collide still get distinct agent scopes.
+func TestScopedCacheOverlongSessions(t *testing.T) {
+	t.Setenv("JULIUS_SESSION_DIR", t.TempDir())
+
+	for _, n := range []int{55, 63, 64, 65, 128} {
+		sid := strings.Repeat("s", n)
+		parent, agentA, agentB := Open(sid), OpenScoped(sid, "a877c50488d25a006"), OpenScoped(sid, "ac0377d08cbbb380a")
+		if agentA.dir == parent.dir || agentB.dir == parent.dir {
+			t.Errorf("len=%d: subagent dir collides with parent dir", n)
+		}
+		if agentA.dir == agentB.dir {
+			t.Errorf("len=%d: sibling subagent dirs collide", n)
+		}
+	}
+	// Overlong session ids sharing a sanitized prefix share the parent dir
+	// (pre-existing cap behavior) but must not share agent scopes: the
+	// discriminator hashes the raw session id, not the truncated name.
+	a := OpenScoped(strings.Repeat("s", 70)+"x", "a877c50488d25a006")
+	b := OpenScoped(strings.Repeat("s", 70)+"y", "a877c50488d25a006")
+	if a.dir == b.dir {
+		t.Errorf("same agent id across colliding sessions must not share a scope: %q", a.dir)
+	}
+}
+
+// The discriminator format is load-bearing: 16 hex chars (64-bit) after
+// one dot. A narrower hash would make sibling collisions plausible in
+// large fleets; pin the width so it cannot regress silently.
+func TestScopedCacheDiscriminatorFormat(t *testing.T) {
+	c := OpenScoped("0908b841-b5b9-4d41-b211-1398ef90d195", "a877c50488d25a006")
+	name := filepath.Base(c.dir)
+	got := regexp.MustCompile(`^0908b841-b5b9-4d41-b211-1398ef90d195\.[0-9a-f]{16}$`).MatchString(name)
+	if !got {
+		t.Errorf("derived dir %q must be <sanitized-sid>.<16 hex>", name)
 	}
 }
 

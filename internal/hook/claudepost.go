@@ -76,7 +76,7 @@ func ProcessPostToolUse(r io.Reader, w io.Writer, reg *filter.Registry, rec Reco
 		return
 	}
 
-	cache := session.Open(session.ScopeID(in.SessionID, in.AgentID, in.TranscriptPath))
+	cache := session.OpenScoped(in.SessionID, in.AgentID)
 	switch in.ToolName {
 	case "Bash":
 		processBash(in, w, reg, cache, rec)
