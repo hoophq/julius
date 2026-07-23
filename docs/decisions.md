@@ -178,9 +178,9 @@ counted as misses.
 
 Subagents share a session id with their parent but not a context window,
 so a parent-side cache hit could suppress output a subagent never saw.
-The `session.ScopeID` seam now closes that gap: events carrying an
-`agent_id` get their own cache scope (`sessionID + "-" + shortHash`),
-events without one keep the plain session scope.
+`session.OpenScoped` now closes that gap: events carrying an `agent_id`
+get their own cache directory, events without one keep the plain session
+scope.
 
 The discriminator was validated against live PostToolUse payloads
 (captured 2026-07-22, sessions with one and with two subagents):
@@ -189,8 +189,7 @@ The discriminator was validated against live PostToolUse payloads
   event carries a stable `agent_id` (plus `agent_type`), unique per
   subagent within the session.
 - `transcript_path` does **not** discriminate: subagent events carry the
-  parent's transcript path verbatim. The parameter stays in the seam so a
-  future payload change is again a one-function-body fix.
+  parent's transcript path verbatim, so it takes no part in scoping.
 - Payloads from Claude Code versions predating `agent_id` decode to an
   empty discriminator and keep today's session-wide scope — degraded, not
   broken.
@@ -203,19 +202,35 @@ offset/limit. Cross-agent "savings" were therefore largely fake — the
 agent paid the marker, the full content, and a wasted round-trip. Honest
 scoping is the default with no opt-out.
 
-Two hardening consequences shipped with it:
+Hardening that shipped with and after it (directory scheme revised
+2026-07-22, post-merge review):
 
-- **The discriminator survives the directory-name cap.** Scope strings
-  become directories via `sanitize`, which truncates at 64 runes. A
-  session id long enough to push the agent suffix past that cap would
-  silently merge contexts again, so an overlong session id is folded into
-  a wider hash instead of carried verbatim — session id length is no more
-  contractual than agent id format.
+- **Derived directories live in a namespace no session id can reach.**
+  An agent-context directory is `sanitize(sessionID) + "." + hash` — the
+  discriminator is appended *after* sanitize, and `.` is a rune sanitize
+  never emits, so no raw session id (however crafted, e.g. one shaped
+  like `otherSession-<hex>`) can name another context's directory, and
+  no length cap can truncate the suffix away. The first shipped scheme
+  (`sessionID + "-" + hash` fed through sanitize) had both weaknesses.
+- **The discriminator is 64-bit and covers the raw session id.** 16 hex
+  chars of `sha256(sessionID || agentID)`: sibling collisions stay
+  negligible even in thousand-agent sessions, sessions whose sanitized
+  names collide (overlong ids sharing a 64-rune prefix) still get
+  distinct agent scopes, and the same agent id in two sessions never
+  shares a directory.
 - **The entry magic bumped (julius1 → julius2).** Entries written before
   scoping may have been committed by a subagent into the shared session
   scope, so they can no longer attest same-context provenance. They now
   load as FormUnknown — one forfeited dedup per key after upgrading,
-  never a marker backed by the wrong context.
+  never a marker backed by the wrong context. Directories under the
+  short-lived `sid-<hex8>` scheme are simply orphaned and age out with
+  the normal purge; a fresh scope means one passed-through read, never a
+  wrong marker.
 
 Purging is unaffected: each scope is one flat directory under the session
-root, aged independently by the same 7-day rule.
+root, aged independently by the same 7-day rule. A nested layout
+(`<sid>/agents/<hash>`) would have separated the namespaces too, but was
+rejected: PurgeOld ages top-level directories by their own mtime, and
+writes deep in a nested tree do not refresh the session root — an
+actively-writing subagent could have its cache purged mid-session. Flat
+dot-separated directories keep every scope's mtime its own.

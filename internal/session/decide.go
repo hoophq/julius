@@ -2,8 +2,6 @@ package session
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"os"
 	"time"
@@ -100,35 +98,6 @@ func (c *Cache) Commit(key string, e Entry) {
 		return
 	}
 	c.write(key, encodeEntry(e))
-}
-
-// ScopeID returns the cache scope for a hook event. Subagents share the
-// parent's session id but not its context window, so an event carrying an
-// agent id gets its own scope: a dedup marker may only point at content
-// this context actually received. Events without an agent id are the main
-// context and keep the plain session scope — including all events from
-// versions that predate the field, which therefore never split scopes.
-// transcriptPath is accepted but is no discriminator: subagent events
-// carry the parent's transcript path (verified against live payloads,
-// 2026-07-22).
-//
-// The scope becomes a directory name capped at maxScopeRunes by sanitize.
-// The agent discriminator must survive that cap — a truncated suffix
-// would silently merge contexts again — so an overlong session id is
-// folded into a wider hash instead of carried verbatim.
-func ScopeID(sessionID, agentID, transcriptPath string) string {
-	if sessionID == "" || agentID == "" {
-		return sessionID
-	}
-	sum := sha256.Sum256([]byte(agentID))
-	scope := sessionID + "-" + hex.EncodeToString(sum[:4])
-	if len([]rune(scope)) > maxScopeRunes {
-		sum = sha256.Sum256([]byte(sessionID + "\x00" + agentID))
-		suffix := "-" + hex.EncodeToString(sum[:8])
-		head := []rune(sessionID)[:maxScopeRunes-len(suffix)]
-		scope = string(head) + suffix
-	}
-	return scope
 }
 
 // On-disk entry format: magic + one-line JSON header + "\n" + raw content
