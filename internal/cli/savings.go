@@ -374,29 +374,45 @@ func renderSavingsJSON(l *ledger.Ledger, since time.Time, days int, sessionID st
 		doc.Unattributed = &savingsJSONEstimate{Basis: basisEstimate, savingsJSONTotals: jsonTotals(b.unattributed)}
 	}
 
+	// A consumer cannot tell an omitted section from an errored query, so
+	// every query failure fails the command — partial JSON that looks like
+	// complete data would be a silent lie.
 	if sessionID != "" {
-		if noSess, err := l.HookNoSessionTotals(since); err == nil && noSess.Events > 0 {
+		noSess, err := l.HookNoSessionTotals(since)
+		if err != nil {
+			return fmt.Errorf("unattributed-session totals: %w", err)
+		}
+		if noSess.Events > 0 {
 			t := jsonTotals(noSess)
 			doc.ExcludedNoSess = &t
 		}
 	} else {
 		api, err := l.APIUsage(since)
-		if err == nil && api.Calls > 0 {
+		if err != nil {
+			return fmt.Errorf("api usage: %w", err)
+		}
+		if api.Calls > 0 {
 			sec := &savingsJSONAPI{
 				Basis: basisExact, Calls: api.Calls, Input: api.Input, Output: api.Output,
 				CacheRead: api.CacheRead, CacheWrite: api.CacheWrite,
 			}
-			if byApp, err := l.APIUsageByApp(since, 10); err == nil {
-				for _, a := range byApp {
-					sec.ByApp = append(sec.ByApp, savingsJSONAppRow{
-						App: a.AppTag, Provider: a.Provider, Model: a.Model,
-						Calls: a.Calls, Input: a.Input, Output: a.Output,
-					})
-				}
+			byApp, err := l.APIUsageByApp(since, 10)
+			if err != nil {
+				return fmt.Errorf("api usage by app: %w", err)
+			}
+			for _, a := range byApp {
+				sec.ByApp = append(sec.ByApp, savingsJSONAppRow{
+					App: a.AppTag, Provider: a.Provider, Model: a.Model,
+					Calls: a.Calls, Input: a.Input, Output: a.Output,
+				})
 			}
 			doc.APIUsage = sec
 		}
-		if prox, err := l.ProxySavingsTotals(since); err == nil && prox.Events > 0 {
+		prox, err := l.ProxySavingsTotals(since)
+		if err != nil {
+			return fmt.Errorf("proxy savings: %w", err)
+		}
+		if prox.Events > 0 {
 			doc.ProxyCompression = &savingsJSONEstimate{Basis: basisEstimate, savingsJSONTotals: jsonTotals(prox)}
 		}
 	}

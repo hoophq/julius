@@ -80,7 +80,9 @@ recorded, never folded into a known bucket.
 `"estimate"` or `"provider_exact"` — so consumers cannot blend the two
 accounting regimes. Dollar figures are deliberately absent from JSON:
 pricing is dated, and the labeled cost line stays a human-surface
-rendering.
+rendering. JSON mode fails closed: a consumer cannot tell an omitted
+section from an errored query, so any query failure fails the command
+rather than shipping valid-looking JSON with a section silently missing.
 
 Per-session views (`--current` via `CLAUDE_CODE_SESSION_ID`, verified
 present in the Bash tool environment; `--session <id>` otherwise) scope

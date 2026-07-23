@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"database/sql"
 	"encoding/json"
 	"io"
 	"os"
@@ -217,6 +218,45 @@ func TestSavingsJSONSessionScoped(t *testing.T) {
 	}
 	if doc.NativeTool == nil || doc.NativeTool.Events != 1 {
 		t.Errorf("session-scoped native_tool = %+v (s2 rows must not leak)", doc.NativeTool)
+	}
+}
+
+// A JSON consumer cannot distinguish an omitted section from an errored
+// query, so a query failure must fail the command — never ship
+// valid-looking JSON with a section silently missing.
+func TestSavingsJSONFailsClosedOnQueryError(t *testing.T) {
+	for table, wantErr := range map[string]string{
+		"api_calls":     "api usage",
+		"proxy_savings": "proxy savings",
+	} {
+		path := filepath.Join(t.TempDir(), "ledger.db")
+		l, err := ledger.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		base := time.Now().Add(-time.Hour)
+		seedMixedKinds(t, l, base)
+
+		// sabotage one app-scoped table; the estimate queries keep working
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("DROP TABLE " + table); err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+
+		out := captureStdout(t, func() {
+			err := renderSavingsJSON(l, base.Add(-time.Hour), 30, "")
+			if err == nil || !strings.Contains(err.Error(), wantErr) {
+				t.Errorf("dropped %s: err = %v, want wrapped %q error", table, err, wantErr)
+			}
+		})
+		if out != "" {
+			t.Errorf("dropped %s: partial JSON emitted despite error:\n%s", table, out)
+		}
+		l.Close()
 	}
 }
 

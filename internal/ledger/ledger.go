@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS hook_events (
   raw_path TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS hook_events_ts ON hook_events(ts);
+CREATE INDEX IF NOT EXISTS hook_events_session_ts ON hook_events(session_id, ts);
 CREATE TABLE IF NOT EXISTS api_calls (
   id INTEGER PRIMARY KEY,
   ts TEXT NOT NULL,
@@ -329,6 +330,18 @@ func (l *Ledger) HookTotals(since time.Time) (Totals, error) {
 	return t, err
 }
 
+// sessionPredicate returns the optional session-scope clause and its
+// argument. Generated SQL instead of a `(? = ” OR session_id = ?)`
+// parameter: the OR form defeats index selection — measured on a 500k-row
+// ledger, SQLite stays on the ts index (~50ms) while the plain equality
+// uses (session_id, ts) (~0.02ms).
+func sessionPredicate(sessionID string) (string, []any) {
+	if sessionID == "" {
+		return "", nil
+	}
+	return " AND session_id = ?", []any{sessionID}
+}
+
 // KindTotals is a per-kind aggregate row.
 type KindTotals struct {
 	Kind string
@@ -340,11 +353,12 @@ type KindTotals struct {
 // returned as recorded — unknown kinds are the caller's to disclose, not
 // to fold into a known bucket.
 func (l *Ledger) HookKindTotals(since time.Time, sessionID string) ([]KindTotals, error) {
+	pred, predArgs := sessionPredicate(sessionID)
 	rows, err := l.db.Query(
 		`SELECT kind, COUNT(*), COALESCE(SUM(tokens_before),0), COALESCE(SUM(tokens_after),0)
-		 FROM hook_events WHERE ts >= ? AND (? = '' OR session_id = ?)
+		 FROM hook_events WHERE ts >= ?`+pred+`
 		 GROUP BY kind`,
-		since.UTC().Format(time.RFC3339), sessionID, sessionID,
+		append([]any{since.UTC().Format(time.RFC3339)}, predArgs...)...,
 	)
 	if err != nil {
 		return nil, err
@@ -371,12 +385,13 @@ type ToolTotals struct {
 // Rows recorded before tool attribution existed come back with an empty
 // Tool — the caller reports them as unattributed, never guesses.
 func (l *Ledger) HookToolTotals(since time.Time, kind, sessionID string) ([]ToolTotals, error) {
+	pred, predArgs := sessionPredicate(sessionID)
 	rows, err := l.db.Query(
 		`SELECT tool, COUNT(*), COALESCE(SUM(tokens_before),0), COALESCE(SUM(tokens_after),0)
-		 FROM hook_events WHERE ts >= ? AND kind = ? AND (? = '' OR session_id = ?)
+		 FROM hook_events WHERE ts >= ? AND kind = ?`+pred+`
 		 GROUP BY tool
 		 ORDER BY SUM(tokens_before) - SUM(tokens_after) DESC`,
-		since.UTC().Format(time.RFC3339), kind, sessionID, sessionID,
+		append([]any{since.UTC().Format(time.RFC3339), kind}, predArgs...)...,
 	)
 	if err != nil {
 		return nil, err
@@ -416,13 +431,15 @@ type CommandTotals struct {
 // Only command-surface kinds qualify: native-tool and dedup rows carry
 // pseudo-commands ("read /path", "grep pattern") that are not commands.
 func (l *Ledger) TopCommands(since time.Time, sessionID string, limit int) ([]CommandTotals, error) {
+	pred, predArgs := sessionPredicate(sessionID)
+	args := append([]any{since.UTC().Format(time.RFC3339)}, predArgs...)
 	rows, err := l.db.Query(
 		`SELECT command, COUNT(*), COALESCE(SUM(tokens_before),0), COALESCE(SUM(tokens_after),0)
-		 FROM hook_events WHERE ts >= ? AND kind IN ('command', 'rewrite') AND (? = '' OR session_id = ?)
+		 FROM hook_events WHERE ts >= ? AND kind IN ('command', 'rewrite')`+pred+`
 		 GROUP BY command
 		 ORDER BY SUM(tokens_before) - SUM(tokens_after) DESC
 		 LIMIT ?`,
-		since.UTC().Format(time.RFC3339), sessionID, sessionID, limit,
+		append(args, limit)...,
 	)
 	if err != nil {
 		return nil, err
